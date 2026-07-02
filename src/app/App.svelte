@@ -1,6 +1,6 @@
 <script lang="ts">
   import { foldRecord, legalActions, type HandAction, type TileId } from '../core'
-  import { forcedAction, PLAYER, tapDiscard } from './drive'
+  import { forcedAction, passClaim, PLAYER, tapDiscard } from './drive'
   import Table from './Table.svelte'
 
   // Arbitrary walking-skeleton seed (it matches the frozen golden vector in
@@ -31,7 +31,10 @@
   // timer on re-run and unmount. $effect never runs in SSR, where the dealt fold
   // renders statically.
   $effect(() => {
-    const action = forcedAction(offered, PLAYER)
+    // The `?? passClaim` arm is the interim auto-pass: forcedAction now waits when
+    // the player may claim, and until T-004-02-02's call/pass prompt replaces this
+    // line, the app declines for him — trajectories stay exactly the unclaimed ones.
+    const action = forcedAction(offered, PLAYER) ?? passClaim(offered, PLAYER)
     if (action === null) return
     const timer = setTimeout(() => actions.push(action), BOT_DELAY_MS)
     return () => clearTimeout(timer)
