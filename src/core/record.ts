@@ -4,7 +4,7 @@
 // replay, undo, and post-hand review are folds over log prefixes; the AI, hints, and
 // the app are all consumers of the folded state.
 
-import { kindOf, type TileId, type TileKind } from './tiles'
+import { kindOf, rankOf, suitOf, type TileId, type TileKind } from './tiles'
 import { buildWall, partitionWall } from './wall'
 import { doraKindOf } from './dora'
 import { dealHands, SEAT_COUNT, type Seat } from './deal'
@@ -26,10 +26,28 @@ import { dealHands, SEAT_COUNT, type Seat } from './deal'
  *   at fold time (the discarded tile equals the one just drawn). Id RANGE validation
  *   stays at the future log-parser boundary (the TileId rule in tiles.ts); the fold
  *   validates semantics — the tile must be in the acting seat's hand or just drawn.
+ * - `chi`/`pon` record the claimed `tile` AND the two hand tiles exposed (`uses`, as
+ *   physical ids in recorded order). The claimed tile is derivable from the fold's
+ *   claim window, so recording it is the seat-tag redundancy again: a claim naming a
+ *   tile other than the fresh discard is corruption and throws. `uses` are the
+ *   caller's private choice of copies — no wall-order authority exists for them, so
+ *   the log is where they are stated.
  */
 export type HandAction =
   | { readonly type: 'draw'; readonly seat: Seat }
   | { readonly type: 'discard'; readonly seat: Seat; readonly tile: TileId }
+  | {
+      readonly type: 'chi'
+      readonly seat: Seat
+      readonly tile: TileId
+      readonly uses: readonly [TileId, TileId]
+    }
+  | {
+      readonly type: 'pon'
+      readonly seat: Seat
+      readonly tile: TileId
+      readonly uses: readonly [TileId, TileId]
+    }
 
 /**
  * A hand is this pair and nothing else. The seed determines the wall order (frozen rng
@@ -46,6 +64,25 @@ export interface HandRecord {
   seed: number
   /** The ordered action log — the draw/discard sequence of the hand (see HandAction). */
   actions: readonly HandAction[]
+}
+
+/**
+ * One exposed meld in the derived view. The claimed tile stays COUNTED in the
+ * discarder's pond (ponds keep the complete discard history — furiten and defense
+ * reads treat a claimed-away tile as still discarded); `(from, claimed)` is the mark
+ * identifying it there. Only `own` — the tiles spliced out of the caller's hand —
+ * joins the conservation partition as the melds zone. Part of the derived view, not
+ * the record contract: the kan ticket may widen this shape (ankan has no claimed
+ * tile) without invalidating any stored hand.
+ */
+export interface Meld {
+  readonly type: 'chi' | 'pon'
+  /** The claimed discard — displayed in the meld, counted in ponds[from]. */
+  readonly claimed: TileId
+  /** The seat it was claimed from. */
+  readonly from: Seat
+  /** The caller's tiles exposed from hand, in the order the log recorded them. */
+  readonly own: readonly [TileId, TileId]
 }
 
 /**
@@ -83,9 +120,27 @@ export interface TableState {
    */
   turn: Seat
   /**
+   * Four per-seat lists of exposed melds in claim order. Fresh arrays per fold.
+   * The conservation zone a meld contributes is its `own` pair — the claimed tile
+   * stays the pond's (see Meld).
+   */
+  melds: readonly [Meld[], Meld[], Meld[], Meld[]]
+  /**
+   * The fresh discard currently open to claims, or null. Set by every discard that
+   * leaves the hand playing; cleared by the next draw (a stale discard can no longer
+   * be claimed) or by the claim that takes it. An ended hand never holds a window.
+   */
+  claimable: { readonly seat: Seat; readonly tile: TileId } | null
+  /**
+   * True exactly from a claim until the caller's ensuing discard: the turn seat owes
+   * a discard with no drawn tile (a caller never draws). The post-draw discard
+   * obligation is expressed by `drawn`, not this flag.
+   */
+  mustDiscard: boolean
+  /**
    * The tile the turn seat has drawn and not yet discarded — held apart from the
    * 13-tile hand, null between turns. Every tile id lives in exactly one of
-   * hands / ponds / drawn / live / dead at all times.
+   * hands / melds' own / ponds / drawn / live / dead at all times.
    */
   drawn: TileId | null
   /**
@@ -128,6 +183,11 @@ function applyAction(state: TableState, action: HandAction, index: number): void
           `action ${index}: draw by seat ${action.seat}, but it is seat ${state.turn}'s turn`,
         )
       }
+      if (state.mustDiscard) {
+        throw new RangeError(
+          `action ${index}: draw out of sequence — seat ${state.turn} owes a discard for its claim`,
+        )
+      }
       if (state.drawn !== null) {
         throw new RangeError(
           `action ${index}: draw out of sequence — seat ${state.turn} already holds drawn tile ${state.drawn}`,
@@ -139,6 +199,8 @@ function applyAction(state: TableState, action: HandAction, index: number): void
         throw new RangeError(`action ${index}: draw from an empty live wall`)
       }
       state.drawn = state.live.shift()!
+      // The draw closes the claim window: the previous discard is now stale.
+      state.claimable = null
       return
     }
     case 'discard': {
@@ -147,13 +209,25 @@ function applyAction(state: TableState, action: HandAction, index: number): void
           `action ${index}: discard by seat ${action.seat}, but it is seat ${state.turn}'s turn`,
         )
       }
-      if (state.drawn === null) {
+      if (state.mustDiscard) {
+        // The claim discard: there is no drawn tile — the tile must come from the hand.
+        const hand = state.hands[state.turn]
+        const at = hand.indexOf(action.tile)
+        if (at === -1) {
+          throw new RangeError(
+            `action ${index}: discard of tile ${action.tile}, which seat ${state.turn} does not hold — a claim discard comes from the hand`,
+          )
+        }
+        hand.splice(at, 1)
+        state.ponds[state.turn].push(action.tile)
+        state.mustDiscard = false
+      } else if (state.drawn === null) {
         throw new RangeError(
           `action ${index}: discard of tile ${action.tile} before seat ${state.turn} drew`,
         )
-      }
-      if (action.tile === state.drawn) {
+      } else if (action.tile === state.drawn) {
         state.ponds[state.turn].push(action.tile)
+        state.drawn = null
       } else {
         const hand = state.hands[state.turn]
         const at = hand.indexOf(action.tile)
@@ -165,12 +239,15 @@ function applyAction(state: TableState, action: HandAction, index: number): void
         hand.splice(at, 1)
         hand.push(state.drawn)
         state.ponds[state.turn].push(action.tile)
+        state.drawn = null
       }
-      state.drawn = null
       if (state.live.length === 0) {
         state.phase = 'ryuukyoku'
       } else {
         state.turn = ((state.turn + 1) % SEAT_COUNT) as Seat
+        // The discard just made is fresh: open the claim window on it. An ended
+        // hand keeps no window (the last discard is never chi/pon-able).
+        state.claimable = { seat: action.seat, tile: action.tile }
       }
       return
     }
@@ -204,6 +281,9 @@ export function foldRecord(record: HandRecord): TableState {
     doraIndicator,
     dora: doraKindOf(kindOf(doraIndicator)),
     ponds: [[], [], [], []],
+    melds: [[], [], [], []],
+    claimable: null,
+    mustDiscard: false,
     turn: 0,
     drawn: null,
     phase: 'playing',
