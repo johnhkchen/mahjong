@@ -1,16 +1,19 @@
 <script lang="ts">
-  import { buildWall } from '../core'
+  import { foldRecord } from '../core'
   import Table from './Table.svelte'
 
   // Arbitrary walking-skeleton seed (it matches the frozen golden vector in
   // wall.test.ts). Seed selection becomes a real feature with the game-start ticket.
   let seed = $state(1)
-  const wall = $derived(buildWall(seed))
+  // The app's authoritative state is the hand record — a seed plus its action log
+  // (necessarily empty until action tickets widen HandAction). Everything on the
+  // table is a fold of it; nothing else is authoritative.
+  const table = $derived(foldRecord({ seed, actions: [] }))
 </script>
 
 <main>
   <header>mahjong</header>
-  <Table {wall} />
+  <Table {table} />
 </main>
 
 <style>

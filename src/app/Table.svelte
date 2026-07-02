@@ -1,9 +1,18 @@
 <script lang="ts">
-  import type { TileId } from '../core'
+  import { kindIndexOf, kindOf, type TableState } from '../core'
+  import Tile from './Tile.svelte'
 
-  // Stateless presentational table: derived data in via props, markup out. It never
-  // builds, sorts, or mutates the wall — state ownership stays one level up (App).
-  let { wall }: { wall: readonly TileId[] } = $props()
+  // Stateless presentational table: the folded TableState in via one prop, markup out.
+  // It never derives game facts — every fact below is a field read off the fold. The
+  // one computation is the display sort of the player's hand, which core explicitly
+  // assigns to the view ("never sorted; sorting is presentation", deal.ts/TableState).
+  let { table }: { table: TableState } = $props()
+
+  // Seat 0 (East) is the player. Stable copy-sort into canonical kind order via the
+  // public accessors — draw order is the record's truth and stays untouched upstream.
+  const hand = $derived(
+    [...table.hands[0]].sort((a, b) => kindIndexOf(kindOf(a)) - kindIndexOf(kindOf(b))),
+  )
 
   // Riichi seating is counterclockwise with the player (East) at the bottom:
   // South right, West top, North left. Grid areas are named by wind, not screen
@@ -20,11 +29,21 @@
   {#each SEATS as seat (seat.area)}
     <div class="seat {seat.area}" class:you={seat.you}>
       {seat.wind}{#if seat.you}<span class="you-mark">you</span>{/if}
+      {#if seat.you}
+        <ul class="hand" aria-label="your hand">
+          {#each hand as id (id)}
+            <li><Tile {id} /></li>
+          {/each}
+        </ul>
+      {/if}
     </div>
   {/each}
   <div class="center">
-    <span class="count">{wall.length}</span>
-    <span class="label">tiles in the wall</span>
+    <div class="dora" aria-label="dora indicator">
+      <Tile id={table.doraIndicator} />
+      <span class="label">dora indicator</span>
+    </div>
+    <span class="label">{table.live.length} tiles left</span>
   </div>
 </section>
 
@@ -85,22 +104,33 @@
     text-transform: lowercase;
   }
 
+  .hand {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.15rem;
+    margin: 0.35rem 0 0;
+    padding: 0;
+    list-style: none;
+    text-transform: none;
+  }
+
   .center {
     grid-area: center;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 0.25rem;
+    gap: 0.5rem;
     border: 1px solid var(--felt-edge);
     border-radius: 0.75rem;
     margin: 12%;
   }
-  .count {
-    font-size: 2rem;
-    font-weight: 700;
-    color: var(--ink);
-    font-variant-numeric: tabular-nums;
+  .dora {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.3rem;
   }
   .label {
     font-size: 0.7rem;
