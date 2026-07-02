@@ -20,7 +20,7 @@ engine over the actions. Nothing else is authoritative. Consequences, all free:
 - **Deterministic tests for free.** Seed the wall, replay a logged hand, assert the outcome. A
   full game is kilobytes of text.
 - **Persistence is boring.** Progress, hand history, and stats are append-only records in
-  IndexedDB/localStorage.
+  `localStorage`.
 
 ## 2. The action-log notation contract
 
@@ -44,14 +44,16 @@ features woven into the app. One correct engine, many consumers.
 
 ## 4. Client-only, offline-first
 
-There is no server. Everything runs in the browser:
+There is no server. The whole game ships as **one self-contained `index.html`** — JS, CSS, and
+the inline-SVG tile art inlined into a single file — and everything runs in the browser:
 
-- The **service worker** (Workbox via vite-plugin-pwa) precaches the app shell *and* the compiled
-  engine, so the whole game boots and plays with no network.
-- **Local persistence** (IndexedDB/localStorage) holds progress, hand history, and stats — the
-  only state there is.
-- **iOS add-to-home** makes it a semi-PWA: a home-screen icon that launches full-screen and works
-  in airplane mode.
+- **Offline the moment it's cached.** A minimal (~20-line) service worker plus a web app manifest
+  is all it takes: one file to cache, and the game boots and plays with no network. No Workbox, no
+  vite-plugin-pwa precache manifest — a one-file app doesn't need a precache list.
+- **Local persistence** (`localStorage`) holds hand-log history and stats — the only state there
+  is. No IndexedDB.
+- **iOS add-to-home** makes it a semi-PWA: the manifest gives a home-screen icon that launches
+  full-screen and works in airplane mode.
 - **Metro-tunnel threat model.** The design target is a person on a train with no signal. If it
   needs the network to deal the next hand, it is broken. First paint and every subsequent hand
   come from cache.
@@ -67,40 +69,47 @@ An offline single-player game lets us delete almost everything a service carries
 
 ## 6. Delivery topology
 
-A TypeScript monorepo split so package boundaries police the architecture:
+The artifact is **one self-contained `dist/index.html`** — and that single file is a *compile
+target, not the authoring format*. The source is composable, tested modules; the build inlines
+them into one file. The tortoise's edge is **rigor in the source, not app apparatus**: it ships
+the *same thin artifact as the hare* — one offline, view-source-able HTML file — but compiled
+from tested, composable modules instead of typed out in one shot. **Same artifact shape, opposite
+provenance** is the exhibit.
 
-- **`engine`** — pure rules: wall build, draw/discard, calls (chi/pon/kan), agari detection,
-  shanten, yaku, and han/fu scoring. Zero DOM, zero platform imports. Action-log in → legal
-  actions / next state out.
-- **`ai`** — the bots. Imports `engine` only; `table state → action` behind the contract.
-- **`ui`/`view`** — components and tile rendering (`GameState → view`); original tile art lives
-  here.
-- **`pwa`/`client`** — the Vite app shell, service worker, and local persistence at
-  `mahjong.b28.dev`.
-- **`showcase`** — a static bundle for the b28.dev cover slot: `engine` + `view` folding a seeded
-  self-play hand in the visitor's browser. No backend, always up — the cover art *is* the
-  production engine dealing and scoring a real hand in the browser.
+Source collapses to two concerns, not five packages:
 
-Deploy is **Cloudflare static** (Workers static assets or Pages) at `mahjong.b28.dev`, built and
-shipped by CI on push to main. The b28.dev embed/CSP work is zone-level and origin-agnostic, so
-it survives any platform choice.
+- **`src/core/`** — the pure engine + AI + action-log notation: wall build, draw/discard, calls
+  (chi/pon/kan), agari detection, shanten, yaku, han/fu scoring, and the stateless bots
+  (`table state → action`). Zero DOM imports, framework-agnostic TypeScript, property-tested with
+  vitest (wall = exactly 136 tiles, shanten-calculator correctness, yaku + han/fu score tables).
+  Big in *tests*, not runtime — and tests never ship.
+- **`src/app/`** — a thin view in **Svelte 5** (components + runes `$state`/`$derived`), input
+  wiring, and `localStorage` persistence (hand-log history + stats). State is a fold over the
+  action log, so re-render is cheap: the table DOM is small. This layer only touches `src/app/` —
+  `core/` never imports it, so the view is swappable.
 
-## Stack (under discussion)
+The build is **Vite + `vite-plugin-singlefile`**: it inlines JS, CSS, and the original inline-SVG
+tile art into one file. No code-splitting, no vendor chunks. Deploy that one file to **Cloudflare
+static** at `mahjong.b28.dev`, built and shipped by CI on push to main; the b28.dev cover embeds
+the *same file* in attract mode — the cover art *is* the production engine dealing and scoring a
+real hand in the browser. The b28.dev embed/CSP work is zone-level and origin-agnostic, so it
+survives any platform choice.
 
-The baseline is **TypeScript + Vite + vite-plugin-pwa (Workbox) + Cloudflare static** — a pure,
-tested game engine with zero DOM imports, wrapped in a Vite SPA whose service worker precaches the
-app shell and engine for offline play, deployed as static assets.
+## Stack
 
-Why this beats the alternatives the other series entries chose: an offline single-player game has
-**no server story**, so SSR/Next.js (that was RowClear) buys nothing, and Gleam/BEAM/Fly (that
-was Consecutive, for a multiplayer household table) has no actor to host — there is no second
-player and no network. A static SPA PWA is the right shape: it installs to the home screen, runs
-in airplane mode, and costs nothing to keep up.
+The stack is decided: **TypeScript + Svelte 5 + Vite + `vite-plugin-singlefile` + Cloudflare
+static**. A pure, tested game engine in `src/core/` with zero DOM imports, a thin Svelte 5 view in
+`src/app/`, compiled by Vite into one self-contained offline `index.html`, deployed as a single
+static asset.
 
-The **view framework is TBD** — React is the default, but if the offline-mobile bundle size
-argues for it, Preact or Solid are on the table; the engine is framework-agnostic behind the
-action-log contract, so the choice is reversible.
+**Svelte 5 for the view** — it's a compiler, so components disappear into ~1–3KB of vanilla JS
+with no runtime VDOM: the best DX-to-weight ratio for a one-file offline app. Because it only
+touches `src/app/` and `core/` is framework-agnostic behind the action-log contract, the choice is
+swappable. Explicitly **not** React/Next/SSR (that was RowClear — an offline single-player game
+has no server story), **not** Gleam/BEAM/Fly (that was Consecutive, a multiplayer household table
+— there is no actor to host, no second player, no network), and **not** Astro (content/SSG — the
+wrong shape for a stateful game).
 
-The **Riichi-vs-other-ruleset choice is isolated behind the `engine` package** — yaku, dora, and
-han/fu scoring are engine internals, so redirecting to Chinese Classical or Hong Kong scoring
-would not leak into the shell, the view, or the contract.
+The **Riichi-vs-other-ruleset choice is isolated behind the engine** — yaku, dora, and han/fu
+scoring are `core/` internals, so redirecting to Chinese Classical or Hong Kong scoring would not
+leak into the app, the view, or the contract.

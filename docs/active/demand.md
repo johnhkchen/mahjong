@@ -39,13 +39,14 @@ and off this board.
 - **Post-hand review** — replay the finished hand with engine notes ("tenpai here, pushed into a
   riichi"), free off the record + engine peripheral. _(advances P2, P5)_
 
-## Tier 3 — Offline-PWA + CI/CD (P3: deploy is nobody's job)
+## Tier 3 — Offline single-file build + CI/CD (P3: deploy is nobody's job)
 
-- **Offline app shell** — vite-plugin-pwa service worker precaching the shell + engine, iOS
-  add-to-home, fully playable with no network. _(advances P3)_
-- **Local persistence** — progress, hand history, and stats in IndexedDB/localStorage; resume is
-  a page load. _(advances P3)_
-- **Cloudflare static deploy + CI/CD** — push to green main → tests → live static build at
+- **Single-file offline build + minimal service worker** — Vite + `vite-plugin-singlefile`
+  compiles to one self-contained `index.html`; a minimal (~20-line) service worker + web app
+  manifest give iOS add-to-home and full offline play. _(advances P3)_
+- **Local persistence** — hand-log history and stats in `localStorage`; resume is a page load.
+  _(advances P3)_
+- **Cloudflare static deploy + CI/CD** — push to green main → tests → live one-file build at
   `mahjong.b28.dev`, zero-touch b28.dev embed. _(advances P3)_
 
 ## Tier 4 — Feel and original art (P4: what makes a hand feel real)
