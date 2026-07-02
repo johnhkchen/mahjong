@@ -263,3 +263,63 @@ describe('draw/discard step', () => {
     )
   })
 })
+
+describe('illegal actions throw instead of folding silently', () => {
+  // Every case appends one bad action to a legally-reachable prefix and asserts a
+  // loud RangeError. Concrete tiles come from the frozen seed-1 fold: East's hand
+  // starts [64, ...], South's [98, ...], and East's first draw is live tile 100.
+  const SEED = 1
+
+  /** Fold `prefix ++ [bad]` and assert it throws a RangeError mentioning `fragment`. */
+  function expectThrows(prefix: readonly HandAction[], bad: HandAction, fragment: string) {
+    const actions = [...prefix, bad]
+    expect(() => foldRecord({ seed: SEED, actions })).toThrow(RangeError)
+    expect(() => foldRecord({ seed: SEED, actions })).toThrow(fragment)
+  }
+
+  const eastDraw: HandAction = { type: 'draw', seat: 0 }
+  const oneTurn = tsumogiriRecord(SEED, 1).actions // East draws 100 and tsumogiris it
+
+  it('wrong-seat draw: South cannot take East’s first turn', () => {
+    expectThrows([], { type: 'draw', seat: 1 }, "seat 0's turn")
+  })
+
+  it('wrong-seat discard: South cannot discard on East’s turn', () => {
+    expectThrows([eastDraw], { type: 'discard', seat: 1, tile: 98 }, "seat 0's turn")
+  })
+
+  it('draw out of sequence: a second draw before discarding', () => {
+    expectThrows([eastDraw], eastDraw, 'out of sequence')
+  })
+
+  it('discard before drawing, even of a tile genuinely in hand', () => {
+    expectThrows([], { type: 'discard', seat: 0, tile: 64 }, 'before seat 0 drew')
+  })
+
+  it('discard of a tile in another seat’s hand', () => {
+    expectThrows([eastDraw], { type: 'discard', seat: 0, tile: 98 }, 'neither holds nor just drew')
+  })
+
+  it('discard of a tile still buried in the live wall', () => {
+    // live[1] = 60 is South's upcoming draw, not East's to discard.
+    expectThrows([eastDraw], { type: 'discard', seat: 0, tile: 60 }, 'neither holds nor just drew')
+  })
+
+  it('discard of a tile already in the pond', () => {
+    expectThrows(oneTurn, { type: 'discard', seat: 1, tile: 100 }, 'before seat 1 drew')
+  })
+
+  it('any action after ryuukyoku: the ended hand accepts nothing', () => {
+    const done = maximalRecord(SEED).actions
+    expectThrows(done, { type: 'draw', seat: 1 }, 'already ended in ryuukyoku')
+    expectThrows(done, { type: 'discard', seat: 1, tile: 64 }, 'already ended in ryuukyoku')
+  })
+
+  it('unknown action type from untyped JS folds loudly, never silently', () => {
+    // The cast simulates a corrupt (or ahead-of-this-engine) record arriving from
+    // storage — the old empty-vocabulary guard's spirit, kept under the real step.
+    const corrupt = { type: 'riichi', seat: 0 } as unknown as HandAction
+    expectThrows([], corrupt, 'unknown action type')
+    expectThrows(oneTurn, corrupt, 'unknown action type')
+  })
+})
