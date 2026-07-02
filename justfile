@@ -10,7 +10,7 @@ default:
 dev: _deps
     flox activate -- npm run dev
 
-# vitest over src/core/ (property tests, scoring tables)
+# vitest over src/ (property tests, scoring tables, app SSR)
 test: _deps
     flox activate -- npm run test
 
@@ -21,6 +21,14 @@ check: _deps
 # vite build → single self-contained dist/index.html
 build: _deps
     flox activate -- npm run build
+
+# ship the one file to Cloudflare static (mahjong.b28.dev) — requires CF auth
+deploy: build
+    flox activate -- npm run deploy
+
+# validate the deploy (wrangler dry-run) — no auth, no network account state
+deploy-check: build
+    flox activate -- npm run deploy:check
 
 # install exact locked deps iff node_modules is missing or older than the lockfile
 [private]
