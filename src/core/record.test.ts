@@ -267,6 +267,147 @@ describe('draw/discard step', () => {
   })
 })
 
+describe('chi/pon claims fold', () => {
+  // Frozen seed-1 facts (from the goldens above): East's hand holds 82 (3s) and
+  // draws live[0] = 100 (8s); South's hand is [98, 42, 120, 91, 2, 106, 28, 26,
+  // 81, 83, 7, 79, 38] with 98 = 7s, 106 = 9s (a chi around 8s) and 81/83 the 3s
+  // pair (a pon of 82). Derived from the frozen wall/deal contracts and
+  // cross-checked against a scratchpad scan at capture time. Never regenerate.
+  const CHI: HandAction = { type: 'chi', seat: 1, tile: 100, uses: [98, 106] }
+  const chiPrefix = tsumogiriRecord(1, 1).actions // East draws 100 (8s), tsumogiris it
+  const PON: HandAction = { type: 'pon', seat: 1, tile: 82, uses: [81, 83] }
+  const ponPrefix: readonly HandAction[] = [
+    { type: 'draw', seat: 0 },
+    { type: 'discard', seat: 0, tile: 82 }, // tedashi: the 3s leaves, drawn 100 joins the hand
+  ]
+
+  // Frozen seed-3 facts (scratchpad scan over tsumogiri prefixes; hand-checked by
+  // kind arithmetic, kind = TILE_KINDS[floor(id/4)]). Deal: South's hand is
+  // [90, 74, 13, 103, 43, 78, 100, 93, 105, 10, 24, 36, 41] with 43/41 the 2p
+  // pair; East's holds 47 (3p) and 37 (1p); live[0..3] = [28, 128, 25, 42], so
+  // the fourth tsumogiri turn has North discard 42 (2p) — claimable by BOTH
+  // East's chi (1p2p3p) and South's pon. Never regenerate.
+  const RACE_SEED = 3
+  const racePrefix = (() => {
+    const live = [28, 128, 25, 42]
+    return live.flatMap((tile, i): HandAction[] => [
+      { type: 'draw', seat: i as Seat },
+      { type: 'discard', seat: i as Seat, tile },
+    ])
+  })()
+  const RACE_CHI: HandAction = { type: 'chi', seat: 0, tile: 42, uses: [47, 37] }
+  const RACE_PON: HandAction = { type: 'pon', seat: 1, tile: 42, uses: [43, 41] }
+
+  /** The zones of the widened conservation partition — melds contribute `own` only. */
+  function allZonesWithMelds(state: TableState): number[] {
+    return [
+      ...state.hands.flat(),
+      ...state.melds.flat().flatMap((meld) => meld.own),
+      ...state.ponds.flat(),
+      ...(state.drawn === null ? [] : [state.drawn]),
+      ...state.live,
+      ...state.dead,
+    ]
+  }
+
+  it('chi exposes the meld, shrinks the hand by the used pair, and hands the caller the turn', () => {
+    const state = foldRecord({ seed: 1, actions: [...chiPrefix, CHI] })
+    expect(state.melds[1]).toEqual([{ type: 'chi', claimed: 100, from: 0, own: [98, 106] }])
+    expect(state.hands[1]).toEqual([42, 120, 91, 2, 28, 26, 81, 83, 7, 79, 38])
+    expect(state.melds[0]).toEqual([])
+    expect(state.hands[0].length).toBe(STARTING_HAND_SIZE)
+    expect(state.turn).toBe(1)
+    expect(state.mustDiscard).toBe(true)
+    expect(state.drawn).toBeNull()
+    expect(state.claimable).toBeNull()
+  })
+
+  it('the claimed tile stays marked in its discarder’s pond: present there, identified by the meld’s (from, claimed)', () => {
+    const state = foldRecord({ seed: 1, actions: [...chiPrefix, CHI] })
+    expect(state.ponds[0]).toEqual([100]) // the discard history keeps the claimed tile
+    const meld = state.melds[1][0]
+    expect(state.ponds[meld.from]).toContain(meld.claimed) // the mark is the join
+  })
+
+  it('pon folds identically through the shared claim path', () => {
+    const state = foldRecord({ seed: 1, actions: [...ponPrefix, PON] })
+    expect(state.melds[1]).toEqual([{ type: 'pon', claimed: 82, from: 0, own: [81, 83] }])
+    expect(state.ponds[0]).toEqual([82])
+    expect(state.hands[1]).toEqual([98, 42, 120, 91, 2, 106, 28, 26, 7, 79, 38])
+    expect(state.turn).toBe(1)
+    expect(state.mustDiscard).toBe(true)
+  })
+
+  it('the caller then discards from the hand: no draw happened, and the discard opens a fresh claim window', () => {
+    const discard: HandAction = { type: 'discard', seat: 1, tile: 38 }
+    const state = foldRecord({ seed: 1, actions: [...chiPrefix, CHI, discard] })
+    expect(state.mustDiscard).toBe(false)
+    expect(state.ponds[1]).toEqual([38])
+    expect(state.hands[1]).toEqual([42, 120, 91, 2, 28, 26, 81, 83, 7, 79])
+    expect(state.turn).toBe(2)
+    expect(state.claimable).toEqual({ seat: 1, tile: 38 })
+    // The live wall never moved for the claim turn: only East's one draw happened.
+    expect(state.live).toEqual(dealtLive(1).slice(1))
+  })
+
+  it('pon by a non-adjacent seat jumps the turn: the skipped seat never draws', () => {
+    // North discarded; South pons. East — the rotation seat — is skipped entirely.
+    const state = foldRecord({ seed: RACE_SEED, actions: [...racePrefix, RACE_PON] })
+    expect(state.melds[1]).toEqual([{ type: 'pon', claimed: 42, from: 3, own: [43, 41] }])
+    expect(state.turn).toBe(1)
+    expect(state.mustDiscard).toBe(true)
+    // East's hand untouched at 13 and the live wall exactly four draws in: East's
+    // would-be draw never happened.
+    expect(state.hands[0].length).toBe(STARTING_HAND_SIZE)
+    expect(state.live.length).toBe(LIVE_WALL_SIZE - DEAL_SIZE - 4)
+    expect(state.ponds[3]).toEqual([42])
+  })
+
+  it('pon-over-chi is deterministic from the record: each logged resolution folds repeatably, to distinct states', () => {
+    // The same fresh discard (42, 2p) is chi-able by East AND pon-able by South —
+    // precedence was resolved when the record was written; the fold replays it.
+    const chiRecord: HandRecord = { seed: RACE_SEED, actions: [...racePrefix, RACE_CHI] }
+    const ponRecord: HandRecord = { seed: RACE_SEED, actions: [...racePrefix, RACE_PON] }
+    const chiState = foldRecord(chiRecord)
+    const ponState = foldRecord(ponRecord)
+    expect(foldRecord(chiRecord)).toEqual(chiState)
+    expect(foldRecord(ponRecord)).toEqual(ponState)
+    expect(chiState.melds[0]).toEqual([{ type: 'chi', claimed: 42, from: 3, own: [47, 37] }])
+    expect(chiState.turn).toBe(0)
+    expect(ponState.melds[0]).toEqual([])
+    expect(ponState.turn).toBe(1)
+  })
+
+  it('conserves all 136 tiles across hands + melds + ponds + drawn + live + dead at every claim-bearing prefix', () => {
+    const anchors: HandRecord[] = [
+      { seed: 1, actions: [...chiPrefix, CHI, { type: 'discard', seat: 1, tile: 38 }] },
+      { seed: 1, actions: [...ponPrefix, PON] },
+      { seed: RACE_SEED, actions: [...racePrefix, RACE_CHI] },
+      { seed: RACE_SEED, actions: [...racePrefix, RACE_PON] },
+    ]
+    for (const { seed, actions } of anchors) {
+      for (let len = 0; len <= actions.length; len++) {
+        const everything = allZonesWithMelds(foldRecord({ seed, actions: actions.slice(0, len) }))
+        expect(everything.length).toBe(TILE_COUNT)
+        expect(new Set(everything).size).toBe(TILE_COUNT)
+      }
+    }
+  })
+
+  it('does not mutate a claim-bearing record, and repeated folds agree in fresh arrays', () => {
+    const record: HandRecord = { seed: RACE_SEED, actions: [...racePrefix, RACE_PON] }
+    const snapshot = structuredClone(record)
+    const first = foldRecord(record)
+    const second = foldRecord(record)
+    expect(record).toEqual(snapshot)
+    expect(second).toEqual(first)
+    expect(second.melds).not.toBe(first.melds)
+    for (let seat = 0; seat < SEAT_COUNT; seat++) {
+      expect(second.melds[seat]).not.toBe(first.melds[seat])
+    }
+  })
+})
+
 describe('illegal actions throw instead of folding silently', () => {
   // Every case appends one bad action to a legally-reachable prefix and asserts a
   // loud RangeError. Concrete tiles come from the frozen seed-1 fold: East's hand

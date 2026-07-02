@@ -151,24 +151,105 @@ export interface TableState {
   phase: 'playing' | 'ryuukyoku'
 }
 
+/** True when the three kinds form a run: one numbered suit, three consecutive ranks. */
+function isRun(a: TileKind, b: TileKind, c: TileKind): boolean {
+  if (suitOf(a) === 'z' || suitOf(a) !== suitOf(b) || suitOf(a) !== suitOf(c)) return false
+  const ranks = [rankOf(a)!, rankOf(b)!, rankOf(c)!].sort((x, y) => x - y)
+  return ranks[1] === ranks[0] + 1 && ranks[2] === ranks[1] + 1
+}
+
+/**
+ * The shared chi/pon step: validate a claim against the open claim window and fold it.
+ * Guard order is fixed — window, seat, tile, uses distinct, uses held, meld shape —
+ * so every illegal claim is named by exactly one message. On success the caller's
+ * `uses` leave the hand for the meld, the turn JUMPS to the caller (seats between the
+ * discarder and the caller never act — their draws simply never happen), the window
+ * closes, and the caller owes a discard (mustDiscard; a caller never draws). The
+ * claimed tile stays counted in the discarder's pond — (from, claimed) on the meld is
+ * its mark there (see Meld).
+ */
+function applyClaim(
+  state: TableState,
+  action: Extract<HandAction, { type: 'chi' | 'pon' }>,
+  index: number,
+): void {
+  const { type, seat, tile, uses } = action
+  const window = state.claimable
+  if (window === null) {
+    throw new RangeError(
+      `action ${index}: ${type} by seat ${seat} with no claimable discard — nothing was discarded, or the discard went stale on the next draw`,
+    )
+  }
+  if (type === 'chi') {
+    const chiSeat = ((window.seat + 1) % SEAT_COUNT) as Seat
+    if (seat !== chiSeat) {
+      throw new RangeError(
+        `action ${index}: chi by seat ${seat}, but only seat ${chiSeat} may chi seat ${window.seat}'s discard`,
+      )
+    }
+  } else if (seat === window.seat) {
+    throw new RangeError(`action ${index}: pon by seat ${seat} of its own discard`)
+  }
+  if (tile !== window.tile) {
+    throw new RangeError(
+      `action ${index}: ${type} of tile ${tile}, but the claimable discard is tile ${window.tile}`,
+    )
+  }
+  if (uses[0] === uses[1]) {
+    throw new RangeError(`action ${index}: ${type} uses tile ${uses[0]} twice`)
+  }
+  const hand = state.hands[seat]
+  for (const used of uses) {
+    if (!hand.includes(used)) {
+      throw new RangeError(
+        `action ${index}: ${type} uses tile ${used}, which seat ${seat} does not hold`,
+      )
+    }
+  }
+  if (type === 'chi') {
+    if (!isRun(kindOf(tile), kindOf(uses[0]), kindOf(uses[1]))) {
+      throw new RangeError(
+        `action ${index}: chi of tiles ${tile}+${uses[0]}+${uses[1]} (kinds ${kindOf(tile)}, ${kindOf(uses[0])}, ${kindOf(uses[1])}) do not form a run`,
+      )
+    }
+  } else if (kindOf(uses[0]) !== kindOf(tile) || kindOf(uses[1]) !== kindOf(tile)) {
+    throw new RangeError(
+      `action ${index}: pon of tiles ${tile}+${uses[0]}+${uses[1]} (kinds ${kindOf(tile)}, ${kindOf(uses[0])}, ${kindOf(uses[1])}) do not form a triplet`,
+    )
+  }
+  hand.splice(hand.indexOf(uses[0]), 1)
+  hand.splice(hand.indexOf(uses[1]), 1)
+  state.melds[seat].push({ type, claimed: tile, from: window.seat, own: uses })
+  state.turn = seat
+  state.claimable = null
+  state.mustDiscard = true
+}
+
 /**
  * The per-action step: advance the fold-local state by one logged action, mutating it
  * in place (every array in `state` is fresh to this fold, so the mutation is invisible
  * outside foldRecord). The turn cycle it enforces:
  *
- * - drawn === null → the turn seat must draw; the drawn tile is live[0], by the
- *   frozen wall order — the action itself records no tile.
+ * - drawn === null, mustDiscard false → the turn seat must draw; the drawn tile is
+ *   live[0], by the frozen wall order — the action itself records no tile. While the
+ *   claim window is open (claimable !== null, always the case here mid-hand) a chi by
+ *   the discarder's next seat or a pon by any other seat may fold INSTEAD, jumping
+ *   the turn to the caller; the draw closes the window (staleness).
  * - drawn !== null → the turn seat must discard: the drawn tile itself (tsumogiri,
  *   hand untouched) or a hand tile (tedashi — the hand tile leaves, the drawn tile is
  *   APPENDED to the hand, preserving "hands are in draw order, never sorted").
+ * - mustDiscard → the caller owes a claim discard: from the hand only, there is no
+ *   drawn tile.
  * - After a discard, if the live wall is empty the hand ends in ryuukyoku (so the
- *   fold is in an ended phase exactly when live is empty); otherwise the turn
- *   advances E→S→W→N.
+ *   fold is in an ended phase exactly when live is empty — and the final discard is
+ *   never claimable); otherwise the turn advances E→S→W→N and the discard opens the
+ *   claim window.
  *
  * Anything else — an action after the end, an unknown type from untyped JS, a wrong
- * seat, a draw out of sequence, a discard of a tile not held — is log corruption and
- * throws RangeError with the action's index (the nextInt precedent: an action the
- * engine cannot interpret must never fold silently into a wrong state).
+ * seat, a draw out of sequence, a discard of a tile not held, an illegal claim — is
+ * log corruption and throws RangeError with the action's index (the nextInt
+ * precedent: an action the engine cannot interpret must never fold silently into a
+ * wrong state).
  */
 function applyAction(state: TableState, action: HandAction, index: number): void {
   if (state.phase !== 'playing') {
@@ -249,6 +330,11 @@ function applyAction(state: TableState, action: HandAction, index: number): void
         // hand keeps no window (the last discard is never chi/pon-able).
         state.claimable = { seat: action.seat, tile: action.tile }
       }
+      return
+    }
+    case 'chi':
+    case 'pon': {
+      applyClaim(state, action, index)
       return
     }
     default: {
