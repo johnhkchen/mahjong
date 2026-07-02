@@ -106,3 +106,21 @@ describe('conservation over random play', () => {
     )
   })
 })
+
+describe('fold determinism over random play', () => {
+  it('folding the same record twice yields deeply-equal state in fresh arrays (property)', () => {
+    // record.test.ts proves this exhaustively for tsumogiri records; the new ground
+    // here is tedashi-bearing records, whose folds splice and permute the hands.
+    fc.assert(
+      fc.property(gameArb, ({ seed, actions }) => {
+        const record = { seed, actions }
+        const first = foldRecord(record)
+        const second = foldRecord(record)
+        expect(second).toEqual(first)
+        expect(second.hands).not.toBe(first.hands)
+        expect(second.ponds).not.toBe(first.ponds)
+        expect(second.live).not.toBe(first.live)
+      }),
+    )
+  })
+})
