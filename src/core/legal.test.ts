@@ -128,7 +128,9 @@ describe('offered actions fold', () => {
 
 /** Membership key for the offered set — the action encoding, serialized. */
 function keyOf(action: HandAction): string {
-  return action.type === 'draw' ? `draw:${action.seat}` : `discard:${action.seat}:${action.tile}`
+  return 'tile' in action
+    ? `${action.type}:${action.seat}:${action.tile}`
+    : `${action.type}:${action.seat}`
 }
 
 describe('outside actions throw', () => {

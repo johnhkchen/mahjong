@@ -32,6 +32,14 @@ import { dealHands, SEAT_COUNT, type Seat } from './deal'
  *   tile other than the fresh discard is corruption and throws. `uses` are the
  *   caller's private choice of copies — no wall-order authority exists for them, so
  *   the log is where they are stated.
+ * - The kan forms follow the same two rules. `daiminkan` mirrors pon with three
+ *   `uses`; `ankan` records only its four `uses` (nothing is claimed; the drawn tile
+ *   may be among them); `shouminkan` records only the added `tile` (the target pon is
+ *   derivable — a seat can hold at most one pon of a kind). The rinshan tile a kan
+ *   draws and the kan-dora indicator it flips are NEVER recorded: both are the
+ *   seed's wall-order authority, like `draw`'s tile. The rinshan draw is implicit in
+ *   the kan action itself — no separate `draw` is logged, because no other action
+ *   can legally intervene between a kan and its replacement draw.
  */
 export type HandAction =
   | { readonly type: 'draw'; readonly seat: Seat }
@@ -48,6 +56,18 @@ export type HandAction =
       readonly tile: TileId
       readonly uses: readonly [TileId, TileId]
     }
+  | {
+      readonly type: 'daiminkan'
+      readonly seat: Seat
+      readonly tile: TileId
+      readonly uses: readonly [TileId, TileId, TileId]
+    }
+  | {
+      readonly type: 'ankan'
+      readonly seat: Seat
+      readonly uses: readonly [TileId, TileId, TileId, TileId]
+    }
+  | { readonly type: 'shouminkan'; readonly seat: Seat; readonly tile: TileId }
 
 /**
  * A hand is this pair and nothing else. The seed determines the wall order (frozen rng
@@ -267,6 +287,256 @@ function applyClaim(
   state.mustDiscard = true
 }
 
+/** The dead wall holds exactly four rinshan tiles (dead[0..3]) — the kan ceiling. */
+const RINSHAN_TILE_COUNT = 4
+
+/** Kans made so far across all seats — i.e. rinshan draws consumed, kan-dora flipped. */
+function kansMade(state: TableState): number {
+  let count = 0
+  for (const melds of state.melds) {
+    for (const meld of melds) {
+      if (meld.type === 'daiminkan' || meld.type === 'ankan' || meld.type === 'shouminkan') {
+        count++
+      }
+    }
+  }
+  return count
+}
+
+/** The first tile id appearing twice in `uses`, or null when all are distinct. */
+function firstDuplicate(uses: readonly TileId[]): TileId | null {
+  for (let i = 0; i < uses.length; i++) {
+    for (let j = i + 1; j < uses.length; j++) {
+      if (uses[i] === uses[j]) return uses[i]
+    }
+  }
+  return null
+}
+
+/**
+ * The wall guards every kan form runs after its window/turn guards: a fifth kan has
+ * no rinshan tile left, and a kan on an empty live wall has no tile to move into the
+ * dead wall as the replacement (the riichi rule: the haitei draw cannot be kanned).
+ * The empty-live case is reachable only for ankan/shouminkan — an open claim window
+ * implies a live wall, so daiminkan keeps the guard as a loud backstop.
+ */
+function guardRinshanAvailable(state: TableState, index: number, type: string, kans: number): void {
+  if (kans >= RINSHAN_TILE_COUNT) {
+    throw new RangeError(
+      `action ${index}: ${type} with no rinshan tile remaining — four kans already made`,
+    )
+  }
+  if (state.live.length === 0) {
+    throw new RangeError(
+      `action ${index}: ${type} on an empty live wall — no replacement tile remains`,
+    )
+  }
+}
+
+/**
+ * The shared kan tail, after a form-specific step has exposed its meld: flip the next
+ * kan-dora indicator, draw the rinshan replacement, and move the live wall's tail
+ * tile into the dead wall. `kansBefore` is the kansMade count from BEFORE this kan's
+ * meld was pushed, and the flip is computed FIRST, against the dead array as it
+ * stands: after k rinshan draws left the front and k replacements joined the end,
+ * the frozen layout's indicator at original index 4 + 2(k+1) sits at 6 + k. Then the
+ * rinshan draw is the front of the dead array (original dead[k], the frozen draw
+ * order) and lands in `drawn` — the ensuing discard is the ordinary discard step —
+ * and the live TAIL moves over, keeping the dead wall at exactly 14 tiles and
+ * bringing exhaustive draw one discard closer through the unchanged phase condition.
+ */
+function applyKanTail(state: TableState, kansBefore: number): void {
+  const indicator = state.dead[6 + kansBefore]
+  state.doraIndicators.push(indicator)
+  state.doras.push(doraKindOf(kindOf(indicator)))
+  state.drawn = state.dead.shift()!
+  state.dead.push(state.live.pop()!)
+}
+
+/**
+ * The daiminkan step: an open kan claiming the fresh discard with three held copies.
+ * Window semantics are pon's (any non-discarder; the turn JUMPS to the caller and
+ * skipped seats never draw); guard order is fixed — window, seat, tile, rinshan
+ * availability, uses distinct, uses held, four-of-a-kind — so every illegal kan is
+ * named by exactly one message. The claimed tile stays counted in the discarder's
+ * pond, per the claim-forms rule on Meld. Unlike chi/pon the caller owes no bare
+ * claim discard: the rinshan draw fills `drawn`, and the ordinary discard step
+ * carries on from there.
+ */
+function applyDaiminkan(
+  state: TableState,
+  action: Extract<HandAction, { type: 'daiminkan' }>,
+  index: number,
+): void {
+  const { seat, tile, uses } = action
+  const window = state.claimable
+  if (window === null) {
+    throw new RangeError(
+      `action ${index}: daiminkan by seat ${seat} with no claimable discard — nothing was discarded, or the discard went stale on the next draw`,
+    )
+  }
+  if (seat === window.seat) {
+    throw new RangeError(`action ${index}: daiminkan by seat ${seat} of its own discard`)
+  }
+  if (tile !== window.tile) {
+    throw new RangeError(
+      `action ${index}: daiminkan of tile ${tile}, but the claimable discard is tile ${window.tile}`,
+    )
+  }
+  const kans = kansMade(state)
+  guardRinshanAvailable(state, index, 'daiminkan', kans)
+  const duplicate = firstDuplicate(uses)
+  if (duplicate !== null) {
+    throw new RangeError(`action ${index}: daiminkan uses tile ${duplicate} twice`)
+  }
+  const hand = state.hands[seat]
+  for (const used of uses) {
+    if (!hand.includes(used)) {
+      throw new RangeError(
+        `action ${index}: daiminkan uses tile ${used}, which seat ${seat} does not hold`,
+      )
+    }
+  }
+  if (uses.some((used) => kindOf(used) !== kindOf(tile))) {
+    throw new RangeError(
+      `action ${index}: daiminkan of tiles ${tile}+${uses.join('+')} (kinds ${kindOf(tile)}, ${uses.map(kindOf).join(', ')}) do not form four of a kind`,
+    )
+  }
+  for (const used of uses) hand.splice(hand.indexOf(used), 1)
+  state.melds[seat].push({ type: 'daiminkan', claimed: tile, from: window.seat, own: uses })
+  state.turn = seat
+  state.claimable = null
+  applyKanTail(state, kans)
+}
+
+/**
+ * The ankan step: on the turn seat's own draw, all four copies of one kind leave the
+ * concealed tiles (hand plus, possibly, the drawn tile itself). Guard order — turn,
+ * claim-discard owed, drawn present, rinshan availability, uses distinct, uses
+ * held-or-drawn, four-of-a-kind. Nothing is claimed, so the meld carries `own` only.
+ * When the drawn tile is NOT among the four, it is appended to the hand (the
+ * tedashi-append rule) before the rinshan draw takes the `drawn` slot.
+ */
+function applyAnkan(
+  state: TableState,
+  action: Extract<HandAction, { type: 'ankan' }>,
+  index: number,
+): void {
+  const { seat, uses } = action
+  if (seat !== state.turn) {
+    throw new RangeError(
+      `action ${index}: ankan by seat ${seat}, but it is seat ${state.turn}'s turn`,
+    )
+  }
+  if (state.mustDiscard) {
+    throw new RangeError(
+      `action ${index}: ankan out of sequence — seat ${seat} owes a discard for its claim`,
+    )
+  }
+  if (state.drawn === null) {
+    throw new RangeError(`action ${index}: ankan before seat ${seat} drew`)
+  }
+  const kans = kansMade(state)
+  guardRinshanAvailable(state, index, 'ankan', kans)
+  const duplicate = firstDuplicate(uses)
+  if (duplicate !== null) {
+    throw new RangeError(`action ${index}: ankan uses tile ${duplicate} twice`)
+  }
+  const hand = state.hands[seat]
+  for (const used of uses) {
+    if (!hand.includes(used) && used !== state.drawn) {
+      throw new RangeError(
+        `action ${index}: ankan uses tile ${used}, which seat ${seat} neither holds nor just drew`,
+      )
+    }
+  }
+  if (uses.some((used) => kindOf(used) !== kindOf(uses[0]))) {
+    throw new RangeError(
+      `action ${index}: ankan of tiles ${uses.join('+')} (kinds ${uses.map(kindOf).join(', ')}) do not form four of a kind`,
+    )
+  }
+  let usedDrawn = false
+  for (const used of uses) {
+    if (used === state.drawn) {
+      usedDrawn = true
+    } else {
+      hand.splice(hand.indexOf(used), 1)
+    }
+  }
+  if (!usedDrawn) hand.push(state.drawn)
+  state.drawn = null
+  state.melds[seat].push({ type: 'ankan', own: uses })
+  applyKanTail(state, kans)
+}
+
+/**
+ * The shouminkan step: on the turn seat's own draw, the fourth copy (from hand or
+ * the drawn tile) joins the seat's OWN pon of that kind, which is REPLACED in place
+ * — same index in the meld list, `claimed`/`from` preserved, `own` grown by the
+ * added tile — so meld order stays claim order and the pond mark survives. Guard
+ * order — turn, claim-discard owed, drawn present, rinshan availability, tile
+ * held-or-drawn, matching pon exists. (Chankan — robbing this kan — is an agari
+ * epic's concern; no ron exists yet.)
+ */
+function applyShouminkan(
+  state: TableState,
+  action: Extract<HandAction, { type: 'shouminkan' }>,
+  index: number,
+): void {
+  const { seat, tile } = action
+  if (seat !== state.turn) {
+    throw new RangeError(
+      `action ${index}: shouminkan by seat ${seat}, but it is seat ${state.turn}'s turn`,
+    )
+  }
+  if (state.mustDiscard) {
+    throw new RangeError(
+      `action ${index}: shouminkan out of sequence — seat ${seat} owes a discard for its claim`,
+    )
+  }
+  if (state.drawn === null) {
+    throw new RangeError(`action ${index}: shouminkan before seat ${seat} drew`)
+  }
+  const kans = kansMade(state)
+  guardRinshanAvailable(state, index, 'shouminkan', kans)
+  const hand = state.hands[seat]
+  const fromDrawn = tile === state.drawn
+  if (!fromDrawn && !hand.includes(tile)) {
+    throw new RangeError(
+      `action ${index}: shouminkan of tile ${tile}, which seat ${seat} neither holds nor just drew`,
+    )
+  }
+  const melds = state.melds[seat]
+  let at = -1
+  for (let i = 0; i < melds.length; i++) {
+    const meld = melds[i]
+    if (meld.type === 'pon' && kindOf(meld.own[0]) === kindOf(tile)) {
+      at = i
+      break
+    }
+  }
+  if (at === -1) {
+    throw new RangeError(
+      `action ${index}: shouminkan of tile ${tile} (kind ${kindOf(tile)}), but seat ${seat} has no pon of that kind`,
+    )
+  }
+  const pon = melds[at] as Extract<Meld, { type: 'chi' | 'pon' }>
+  if (fromDrawn) {
+    state.drawn = null
+  } else {
+    hand.splice(hand.indexOf(tile), 1)
+    hand.push(state.drawn)
+    state.drawn = null
+  }
+  melds[at] = {
+    type: 'shouminkan',
+    claimed: pon.claimed,
+    from: pon.from,
+    own: [pon.own[0], pon.own[1], tile],
+  }
+  applyKanTail(state, kans)
+}
+
 /**
  * The per-action step: advance the fold-local state by one logged action, mutating it
  * in place (every array in `state` is fresh to this fold, so the mutation is invisible
@@ -282,6 +552,12 @@ function applyClaim(
  *   APPENDED to the hand, preserving "hands are in draw order, never sorted").
  * - mustDiscard → the caller owes a claim discard: from the hand only, there is no
  *   drawn tile.
+ * - Kans interleave the cycle at two points: a daiminkan folds INSTEAD of a draw
+ *   while the claim window is open (like pon, from any non-discarder — the turn
+ *   jumps); an ankan or shouminkan folds while the turn seat holds its drawn tile,
+ *   before the discard. Every kan form ends in the shared tail — kan-dora flip,
+ *   rinshan draw into `drawn`, live tail into the dead wall — so the ordinary
+ *   discard arm always plays the tile that follows a kan.
  * - After a discard, if the live wall is empty the hand ends in ryuukyoku (so the
  *   fold is in an ended phase exactly when live is empty — and the final discard is
  *   never claimable); otherwise the turn advances E→S→W→N and the discard opens the
@@ -377,6 +653,18 @@ function applyAction(state: TableState, action: HandAction, index: number): void
     case 'chi':
     case 'pon': {
       applyClaim(state, action, index)
+      return
+    }
+    case 'daiminkan': {
+      applyDaiminkan(state, action, index)
+      return
+    }
+    case 'ankan': {
+      applyAnkan(state, action, index)
+      return
+    }
+    case 'shouminkan': {
+      applyShouminkan(state, action, index)
       return
     }
     default: {

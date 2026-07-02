@@ -158,7 +158,9 @@ describe('fold determinism over random play', () => {
 
 /** Membership key for offered-set checks (mirrored from legal.test.ts). */
 function keyOf(action: HandAction): string {
-  return action.type === 'draw' ? `draw:${action.seat}` : `discard:${action.seat}:${action.tile}`
+  return 'tile' in action
+    ? `${action.type}:${action.seat}:${action.tile}`
+    : `${action.type}:${action.seat}`
 }
 
 /**
@@ -191,8 +193,9 @@ describe('mutated sequences throw', () => {
         const i = at % actions.length
         const action = actions[i]
         const seat = ((action.seat + bump) % SEAT_COUNT) as Seat
+        // The generator only emits draws and discards (legalActions offers no more yet).
         const mutant: HandAction =
-          action.type === 'draw' ? { type: 'draw', seat } : { type: 'discard', seat, tile: action.tile }
+          action.type === 'discard' ? { type: 'discard', seat, tile: action.tile } : { type: 'draw', seat }
         assertMutantThrows(seed, actions.slice(0, i), mutant, actions.slice(i + 1))
       }),
     )

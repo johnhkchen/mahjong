@@ -1,6 +1,7 @@
 import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
 import {
+  DEAD_WALL_SIZE,
   DEAL_SIZE,
   LIVE_WALL_SIZE,
   SEAT_COUNT,
@@ -15,6 +16,7 @@ import {
   type HandAction,
   type HandRecord,
   type Seat,
+  type TileId,
   type TableState,
 } from './index'
 
@@ -60,6 +62,23 @@ function maximalRecord(seed: number): HandRecord {
 
 /** Turn counts worth folding: 0 (dealt), mid-hand, and the full 70. */
 const turnsArb = fc.integer({ min: 0, max: FULL_TURNS })
+
+/** The frozen dead wall for a seed, from the upstream contracts — never from the fold. */
+function dealtDead(seed: number): number[] {
+  return partitionWall(buildWall(seed)).dead
+}
+
+/** The zones of the widened conservation partition — melds contribute `own` only. */
+function allZonesWithMelds(state: TableState): number[] {
+  return [
+    ...state.hands.flat(),
+    ...state.melds.flat().flatMap((meld) => meld.own),
+    ...state.ponds.flat(),
+    ...(state.drawn === null ? [] : [state.drawn]),
+    ...state.live,
+    ...state.dead,
+  ]
+}
 
 describe('hand-record fold entrypoint', () => {
   it('folds an empty action log to the freshly dealt table — the explicit build → partition → deal → dora composition, for any seed (property)', () => {
@@ -301,18 +320,6 @@ describe('chi/pon claims fold', () => {
   })()
   const RACE_CHI: HandAction = { type: 'chi', seat: 0, tile: 42, uses: [47, 37] }
   const RACE_PON: HandAction = { type: 'pon', seat: 1, tile: 42, uses: [43, 41] }
-
-  /** The zones of the widened conservation partition — melds contribute `own` only. */
-  function allZonesWithMelds(state: TableState): number[] {
-    return [
-      ...state.hands.flat(),
-      ...state.melds.flat().flatMap((meld) => meld.own),
-      ...state.ponds.flat(),
-      ...(state.drawn === null ? [] : [state.drawn]),
-      ...state.live,
-      ...state.dead,
-    ]
-  }
 
   it('chi exposes the meld, shrinks the hand by the used pair, and hands the caller the turn', () => {
     const state = foldRecord({ seed: 1, actions: [...chiPrefix, CHI] })
@@ -577,5 +584,538 @@ describe('illegal actions throw instead of folding silently', () => {
     const corrupt = { type: 'riichi', seat: 0 } as unknown as HandAction
     expectThrows([], corrupt, 'unknown action type')
     expectThrows(oneTurn, corrupt, 'unknown action type')
+  })
+})
+
+// ————————————————————————————————————————————————————————————————————————————
+// Frozen kan-anchor facts (scratchpad scan over the frozen wall/deal contracts;
+// kinds by id arithmetic, kind = TILE_KINDS[floor(id/4)]). Never regenerate.
+//
+// Seed 67 — daiminkan/shouminkan geometry. East's dealt hand holds 91 (5s, ids
+// 88..91) and draws live[0] = 100 (8s); North's dealt hand
+// [87, 129, 99, 90, 125, 17, 131, 101, 88, 89, 55, 61, 80] holds the other three
+// 5s copies 90, 88, 89. live[1..4] = [23, 113, 132, 14]; live[69] = 72 (the tail
+// tile the first kan moves over). dead =
+// [135, 133, 50, 70, 81, 105, 108, 98, 43, 27, 67, 73, 64, 7]: rinshan draws
+// 135, 133, 50, 70 in order; indicator layout 81 (3s → dora 4s) at [4], first
+// kan flip 108 (1z → dora 2z) at [6].
+//
+// Seed 161 — ankan with the drawn tile among the four. South's dealt hand
+// [21, 31, 96, 118, 26, 29, 35, 74, 134, 116, 119, 122, 12] holds the 3z trio
+// 118, 116, 119 (3z ids 116..119); live[0] = 95 (East's tsumogiri), live[1] =
+// 117 — South draws the fourth 3z. dead[0] = 56 (first rinshan); dead[4] = 98
+// (7s → 8s); dead[6] = 62 (7p → 8p); live[69] = 16.
+//
+// Seed 280 — ankan of a dealt quad, drawn tile NOT among the four. North's dealt
+// hand [115, 0, 82, 27, 30, 11, 76, 3, 106, 2, 59, 135, 1] holds all four 1m
+// copies 0..3; live[0..3] = [19, 37, 77, 134] (three tsumogiri turns, then North
+// draws 134, a 7z). dead[0] = 71 (first rinshan); dead[4] = 35 (9m → 1m);
+// dead[6] = 91 (5s → 6s); live[68] = 54, live[69] = 9.
+//
+// Seed 56 — two daiminkan geometries in one hand. East's dealt hand holds the 3s
+// trio [82, 83, 80] and North holds the fourth 3s = 81; South holds the 4m trio
+// [14, 12, 15] and West the fourth 4m = 13. live[0..4] = [98, 108, 68, 129, 72];
+// dead = [0, 127, 40, 46, 43, 30, 94, 133, 31, 41, 21, 20, 51, 10]: rinshan
+// draws 0, 127, …; indicators 43 (2p → 3p) at [4], 94 (6s → 7s) at [6], 31
+// (8m → 9m) at [8]; live[68] = 5, live[69] = 8 (the two tail tiles moved).
+//
+// Seed 101033 — four daiminkan geometries with distinct kinds, for the four-kan
+// chain: holder 0 takes 6 (2m) from seat 2 with [7, 4, 5]; holder 0 takes 69
+// (9p) from seat 1 with [68, 70, 71]; holder 1 takes 16 (5m) from seat 0 with
+// [18, 17, 19]; holder 3 takes 130 (6z) from seat 0 with [129, 131, 128].
+// ————————————————————————————————————————————————————————————————————————————
+
+const DAIMINKAN67: HandAction = { type: 'daiminkan', seat: 3, tile: 91, uses: [90, 88, 89] }
+const kanPrefix67: readonly HandAction[] = [
+  { type: 'draw', seat: 0 },
+  { type: 'discard', seat: 0, tile: 91 }, // tedashi: the fourth 5s leaves, drawn 100 joins the hand
+]
+
+const PON67: HandAction = { type: 'pon', seat: 3, tile: 91, uses: [90, 88] }
+/** Pon keeping the third copy, claim discard, one full go-around, North draws again. */
+const shouminkanPrefix67: readonly HandAction[] = [
+  ...kanPrefix67,
+  PON67,
+  { type: 'discard', seat: 3, tile: 87 }, // the claim discard (tedashi, a 4s)
+  { type: 'draw', seat: 0 },
+  { type: 'discard', seat: 0, tile: 23 }, // live[1] tsumogiri
+  { type: 'draw', seat: 1 },
+  { type: 'discard', seat: 1, tile: 113 }, // live[2] tsumogiri
+  { type: 'draw', seat: 2 },
+  { type: 'discard', seat: 2, tile: 132 }, // live[3] tsumogiri
+  { type: 'draw', seat: 3 }, // North draws live[4] = 14
+]
+const SHOUMINKAN67: HandAction = { type: 'shouminkan', seat: 3, tile: 89 }
+
+const ANKAN161: HandAction = { type: 'ankan', seat: 1, uses: [118, 116, 119, 117] }
+const ankanPrefix161: readonly HandAction[] = [
+  ...tsumogiriRecord(161, 1).actions, // East draws 95 and tsumogiris it
+  { type: 'draw', seat: 1 }, // South draws 117, the fourth 3z
+]
+
+const ANKAN280: HandAction = { type: 'ankan', seat: 3, uses: [0, 1, 2, 3] }
+const ankanPrefix280: readonly HandAction[] = [
+  ...tsumogiriRecord(280, 3).actions, // three tsumogiri turns
+  { type: 'draw', seat: 3 }, // North draws 134 (7z) — NOT part of the quad
+]
+
+const DAIMINKAN56_FIRST: HandAction = { type: 'daiminkan', seat: 0, tile: 81, uses: [82, 83, 80] }
+const DAIMINKAN56_SECOND: HandAction = { type: 'daiminkan', seat: 1, tile: 13, uses: [14, 12, 15] }
+const twoKanActions56: readonly HandAction[] = [
+  ...tsumogiriRecord(56, 3).actions, // E, S, W tsumogiri live[0..2]
+  { type: 'draw', seat: 3 },
+  { type: 'discard', seat: 3, tile: 81 }, // tedashi: North's lone 3s
+  DAIMINKAN56_FIRST,
+  { type: 'discard', seat: 0, tile: 0 }, // rinshan tsumogiri — dead[0] is tile id 0
+  { type: 'draw', seat: 1 },
+  { type: 'discard', seat: 1, tile: 72 }, // live[4] tsumogiri
+  { type: 'draw', seat: 2 },
+  { type: 'discard', seat: 2, tile: 13 }, // tedashi: West's lone 4m
+  DAIMINKAN56_SECOND,
+]
+
+const FOUR_KAN_SEED = 101033
+const FOUR_KAN_GEOMS: ReadonlyArray<{
+  holder: Seat
+  source: Seat
+  fourth: TileId
+  uses: readonly [TileId, TileId, TileId]
+}> = [
+  { holder: 0, source: 2, fourth: 6, uses: [7, 4, 5] },
+  { holder: 0, source: 1, fourth: 69, uses: [68, 70, 71] },
+  { holder: 1, source: 0, fourth: 16, uses: [18, 17, 19] },
+  { holder: 3, source: 0, fourth: 130, uses: [129, 131, 128] },
+]
+
+/**
+ * The four-kan chain for seed 101033: for each geometry, tsumogiri turns route
+ * play to the source seat, the source tedashis the fourth copy, the holder
+ * daiminkans it and tsumogiris the rinshan tile (dead[k] by the frozen draw
+ * order). Constructed from the frozen wall contracts only — deterministic and
+ * wall-derived like tsumogiriRecord.
+ */
+function fourKanChain(): HandAction[] {
+  const live = dealtLive(FOUR_KAN_SEED)
+  const dead = dealtDead(FOUR_KAN_SEED)
+  const actions: HandAction[] = []
+  let turn: Seat = 0
+  let liveAt = 0
+  FOUR_KAN_GEOMS.forEach((geom, kan) => {
+    while (turn !== geom.source) {
+      actions.push(
+        { type: 'draw', seat: turn },
+        { type: 'discard', seat: turn, tile: live[liveAt++] },
+      )
+      turn = ((turn + 1) % SEAT_COUNT) as Seat
+    }
+    actions.push(
+      { type: 'draw', seat: geom.source },
+      { type: 'discard', seat: geom.source, tile: geom.fourth },
+      { type: 'daiminkan', seat: geom.holder, tile: geom.fourth, uses: geom.uses },
+      { type: 'discard', seat: geom.holder, tile: dead[kan] }, // rinshan tsumogiri
+    )
+    liveAt++
+    turn = ((geom.holder + 1) % SEAT_COUNT) as Seat
+  })
+  return actions
+}
+
+/**
+ * A full seed-280 hand with one ankan: three tsumogiri turns, North's quad ankan
+ * and rinshan tsumogiri, then pure tsumogiri until the wall runs dry. The kan
+ * moved live[69] to the dead wall, so only live[4..68] remain as normal draws —
+ * 69 draws in total, one fewer than a kanless hand.
+ */
+function kanMaximalRecord280(): HandRecord {
+  const live = dealtLive(280)
+  const actions: HandAction[] = [
+    ...ankanPrefix280,
+    ANKAN280,
+    { type: 'discard', seat: 3, tile: 71 }, // rinshan tsumogiri — dead[0]
+  ]
+  for (let i = 4; i <= 68; i++) {
+    const seat = ((i - 4) % SEAT_COUNT) as Seat
+    actions.push({ type: 'draw', seat }, { type: 'discard', seat, tile: live[i] })
+  }
+  return { seed: 280, actions }
+}
+
+describe('kan forms fold', () => {
+  it('daiminkan exposes the meld, jumps the turn past the skipped seats, and draws the rinshan tile', () => {
+    const state = foldRecord({ seed: 67, actions: [...kanPrefix67, DAIMINKAN67] })
+    expect(state.melds[3]).toEqual([{ type: 'daiminkan', claimed: 91, from: 0, own: [90, 88, 89] }])
+    // North's dealt hand minus the three exposed 5s copies.
+    expect(state.hands[3]).toEqual([87, 129, 99, 125, 17, 131, 101, 55, 61, 80])
+    expect(state.turn).toBe(3) // seats 1 and 2 never act
+    expect(state.hands[1].length).toBe(STARTING_HAND_SIZE)
+    expect(state.hands[2].length).toBe(STARTING_HAND_SIZE)
+    // The rinshan draw replaces the claim-discard obligation: drawn, not mustDiscard.
+    expect(state.mustDiscard).toBe(false)
+    expect(state.drawn).toBe(135) // original dead[0], the first rinshan tile
+    expect(state.claimable).toBeNull()
+    expect(state.ponds[0]).toEqual([91]) // the claimed tile stays marked in the discarder's pond
+  })
+
+  it('a kan flips the next indicator, keeps the dead wall at 14, and shortens the live wall', () => {
+    const state = foldRecord({ seed: 67, actions: [...kanPrefix67, DAIMINKAN67] })
+    expect(state.doraIndicators).toEqual([81, 108]) // initial dead[4], kan flip dead[6]
+    expect(state.doras).toEqual(['4s', '2z']) // 3s → 4s, 1z → 2z by the frozen dora cycles
+    expect(state.doraIndicator).toBe(81) // the singular fields keep meaning "the initial flip"
+    expect(state.dora).toBe('4s')
+    // dead lost its front (the rinshan 135) and gained the live tail 72 at the end.
+    expect(state.dead).toEqual([133, 50, 70, 81, 105, 108, 98, 43, 27, 67, 73, 64, 7, 72])
+    expect(state.dead.length).toBe(DEAD_WALL_SIZE)
+    expect(state.live).toEqual(dealtLive(67).slice(1, -1)) // one draw off the front, one tail tile gone
+  })
+
+  it('the rinshan discard folds through the ordinary discard step and reopens the claim window', () => {
+    const state = foldRecord({
+      seed: 67,
+      actions: [...kanPrefix67, DAIMINKAN67, { type: 'discard', seat: 3, tile: 135 }],
+    })
+    expect(state.ponds[3]).toEqual([135])
+    expect(state.drawn).toBeNull()
+    expect(state.turn).toBe(0)
+    expect(state.claimable).toEqual({ seat: 3, tile: 135 })
+  })
+
+  it('ankan with the drawn tile among the four: nothing was claimed, the meld is all own', () => {
+    const state = foldRecord({ seed: 161, actions: [...ankanPrefix161, ANKAN161] })
+    expect(state.melds[1]).toEqual([{ type: 'ankan', own: [118, 116, 119, 117] }])
+    // South's dealt hand minus the trio; the drawn 117 went straight into the meld.
+    expect(state.hands[1]).toEqual([21, 31, 96, 26, 29, 35, 74, 134, 122, 12])
+    expect(state.turn).toBe(1) // an ankan keeps the turn
+    expect(state.drawn).toBe(56) // original dead[0]
+    expect(state.doraIndicators).toEqual([98, 62])
+    expect(state.doras).toEqual(['8s', '8p'])
+    expect(state.ponds[1]).toEqual([]) // nothing of South's was ever discarded
+  })
+
+  it('ankan of a dealt quad: the surviving drawn tile is appended to the hand end', () => {
+    const state = foldRecord({ seed: 280, actions: [...ankanPrefix280, ANKAN280] })
+    expect(state.melds[3]).toEqual([{ type: 'ankan', own: [0, 1, 2, 3] }])
+    // North's dealt hand minus the quad, with the untouched draw 134 appended last.
+    expect(state.hands[3]).toEqual([115, 82, 27, 30, 11, 76, 106, 59, 135, 134])
+    expect(state.drawn).toBe(71) // original dead[0] — the rinshan, not the kept draw
+    expect(state.doraIndicators).toEqual([35, 91])
+    expect(state.doras).toEqual(['1m', '6s'])
+  })
+
+  it('shouminkan upgrades the pon in place: claimed and from survive, own grows by the added copy', () => {
+    const before = foldRecord({ seed: 67, actions: shouminkanPrefix67 })
+    expect(before.melds[3]).toEqual([{ type: 'pon', claimed: 91, from: 0, own: [90, 88] }])
+    const state = foldRecord({ seed: 67, actions: [...shouminkanPrefix67, SHOUMINKAN67] })
+    expect(state.melds[3]).toEqual([
+      { type: 'shouminkan', claimed: 91, from: 0, own: [90, 88, 89] },
+    ])
+    // 89 left the hand for the meld; the drawn 14 was appended in its stead.
+    expect(state.hands[3]).toEqual([129, 99, 125, 17, 131, 101, 55, 61, 80, 14])
+    expect(state.drawn).toBe(135) // dead[0] — the hand's first rinshan
+    expect(state.turn).toBe(3)
+    expect(state.ponds[0]).toEqual([91, 23]) // the pond mark survives the upgrade (23 = East's later tsumogiri)
+    expect(state.doraIndicators).toEqual([81, 108])
+  })
+})
+
+describe('kan wall accounting', () => {
+  it('two kans in one hand: rinshan tiles leave dead[0..] in draw order, indicators walk rightward', () => {
+    const state = foldRecord({ seed: 56, actions: [...twoKanActions56] })
+    expect(state.melds[0]).toEqual([{ type: 'daiminkan', claimed: 81, from: 3, own: [82, 83, 80] }])
+    expect(state.melds[1]).toEqual([{ type: 'daiminkan', claimed: 13, from: 2, own: [14, 12, 15] }])
+    expect(state.drawn).toBe(127) // the SECOND rinshan — original dead[1]
+    expect(state.doraIndicators).toEqual([43, 94, 31]) // dead[4], then kan flips dead[6], dead[8]
+    expect(state.doras).toEqual(['3p', '7s', '9m'])
+    // dead lost its two rinshan tiles from the front and gained the two live tail
+    // tiles (live[69] = 8 first, then live[68] = 5) at the end.
+    expect(state.dead).toEqual([40, 46, 43, 30, 94, 133, 31, 41, 21, 20, 51, 10, 8, 5])
+    expect(state.dead.length).toBe(DEAD_WALL_SIZE)
+    expect(state.live).toEqual(dealtLive(56).slice(6, -2)) // six draws, two tail tiles gone
+    expect(state.turn).toBe(1)
+  })
+
+  it('a kan brings exhaustive draw one discard earlier: 69 draws, 69 discards, same phase flip', () => {
+    const record = kanMaximalRecord280()
+    expect(record.actions.filter((a) => a.type === 'draw').length).toBe(FULL_TURNS - 1)
+    const state = foldRecord(record)
+    expect(state.phase).toBe('ryuukyoku')
+    expect(state.live).toEqual([])
+    expect(state.drawn).toBeNull()
+    expect(state.ponds.flat().length).toBe(FULL_TURNS - 1) // a kanless hand discards 70 times
+    expect(state.dead.length).toBe(DEAD_WALL_SIZE)
+    // Still playing through the last draw: live is already empty, the discard ends it.
+    const beforeLast = foldRecord({ seed: 280, actions: record.actions.slice(0, -1) })
+    expect(beforeLast.phase).toBe('playing')
+    expect(beforeLast.live).toEqual([])
+    expect(beforeLast.drawn).toBe(54) // live[68] — the last live draw once the kan ate live[69]
+  })
+
+  it('conserves all 136 tiles across hands + melds + ponds + drawn + live + dead at every kan-bearing prefix', () => {
+    const anchors: HandRecord[] = [
+      { seed: 67, actions: [...kanPrefix67, DAIMINKAN67, { type: 'discard', seat: 3, tile: 135 }] },
+      { seed: 161, actions: [...ankanPrefix161, ANKAN161] },
+      { seed: 280, actions: [...ankanPrefix280, ANKAN280] },
+      { seed: 67, actions: [...shouminkanPrefix67, SHOUMINKAN67] },
+      { seed: 56, actions: [...twoKanActions56] },
+      { seed: FOUR_KAN_SEED, actions: fourKanChain() },
+      kanMaximalRecord280(),
+    ]
+    for (const { seed, actions } of anchors) {
+      for (let len = 0; len <= actions.length; len++) {
+        const everything = allZonesWithMelds(foldRecord({ seed, actions: actions.slice(0, len) }))
+        expect(everything.length).toBe(TILE_COUNT)
+        expect(new Set(everything).size).toBe(TILE_COUNT)
+      }
+    }
+  })
+
+  it('four kans exhaust the rinshan zone: all five indicators flipped, wall shortened by four', () => {
+    const state = foldRecord({ seed: FOUR_KAN_SEED, actions: fourKanChain() })
+    const dead = dealtDead(FOUR_KAN_SEED)
+    expect(state.doraIndicators).toEqual([dead[4], dead[6], dead[8], dead[10], dead[12]])
+    expect(state.doras).toEqual(state.doraIndicators.map((id) => doraKindOf(kindOf(id))))
+    expect(state.dead.length).toBe(DEAD_WALL_SIZE)
+    expect(state.melds.flat().length).toBe(4)
+    // 11 routed draws happened (see fourKanChain), and four tail tiles moved over.
+    expect(state.live.length).toBe(FULL_TURNS - 11 - 4)
+  })
+
+  it('does not mutate a kan-bearing record, and repeated folds agree in fresh arrays', () => {
+    const record: HandRecord = { seed: 56, actions: [...twoKanActions56] }
+    const snapshot = structuredClone(record)
+    const first = foldRecord(record)
+    const second = foldRecord(record)
+    expect(record).toEqual(snapshot)
+    expect(second).toEqual(first)
+    expect(second.doraIndicators).not.toBe(first.doraIndicators)
+    expect(second.doras).not.toBe(first.doras)
+    expect(second.dead).not.toBe(first.dead)
+    for (let seat = 0; seat < SEAT_COUNT; seat++) {
+      expect(second.melds[seat]).not.toBe(first.melds[seat])
+    }
+  })
+})
+
+describe('illegal kans throw instead of folding silently', () => {
+  // Every case appends one bad action to a legally-reachable anchor prefix and
+  // asserts a loud RangeError NAMING THE ACTION INDEX. Guard orders are frozen
+  // (see the step): daiminkan window → seat → tile → rinshan → distinct → held →
+  // shape; ankan/shouminkan turn → claim-owed → drawn → rinshan → tiles. Several
+  // cases deliberately carry otherwise-valid (or deliberately garbage) later
+  // parts to prove which guard speaks first.
+
+  /** Fold `prefix ++ [bad]`, assert RangeError naming both `fragment` and the index. */
+  function expectKanThrows(
+    seed: number,
+    prefix: readonly HandAction[],
+    bad: HandAction,
+    fragment: string,
+  ) {
+    const fold = () => foldRecord({ seed, actions: [...prefix, bad] })
+    expect(fold).toThrow(RangeError)
+    expect(fold).toThrow(fragment)
+    expect(fold).toThrow(`action ${prefix.length}`)
+  }
+
+  it('daiminkan before anything was discarded: no window exists at the deal', () => {
+    expectKanThrows(67, [], DAIMINKAN67, 'no claimable discard')
+  })
+
+  it('stale daiminkan: the legal kan goes stale once the next seat draws', () => {
+    expectKanThrows(67, [...kanPrefix67, { type: 'draw', seat: 1 }], DAIMINKAN67, 'no claimable discard')
+  })
+
+  it('daiminkan by the discarder of its own tile', () => {
+    expectKanThrows(
+      67,
+      kanPrefix67,
+      { type: 'daiminkan', seat: 0, tile: 91, uses: [96, 6, 78] },
+      'its own discard',
+    )
+  })
+
+  it('wrong-tile daiminkan: naming any tile but the fresh discard', () => {
+    expectKanThrows(
+      67,
+      kanPrefix67,
+      { type: 'daiminkan', seat: 3, tile: 90, uses: [90, 88, 89] },
+      'the claimable discard is tile 91',
+    )
+  })
+
+  it('duplicate daiminkan uses: one physical tile cannot be exposed twice', () => {
+    expectKanThrows(
+      67,
+      kanPrefix67,
+      { type: 'daiminkan', seat: 3, tile: 91, uses: [90, 90, 88] },
+      'uses tile 90 twice',
+    )
+  })
+
+  it('unheld daiminkan uses: the claimed tile itself cannot double as a used tile', () => {
+    expectKanThrows(
+      67,
+      kanPrefix67,
+      { type: 'daiminkan', seat: 3, tile: 91, uses: [90, 88, 91] },
+      'uses tile 91, which seat 3 does not hold',
+    )
+  })
+
+  it('daiminkan of kinds that form no quad', () => {
+    // 87 = 4s, genuinely in North's hand, against the claimed 5s.
+    expectKanThrows(
+      67,
+      kanPrefix67,
+      { type: 'daiminkan', seat: 3, tile: 91, uses: [90, 88, 87] },
+      'do not form four of a kind',
+    )
+  })
+
+  it('wrong-seat ankan: only the turn seat may kan', () => {
+    expectKanThrows(
+      161,
+      ankanPrefix161,
+      { type: 'ankan', seat: 2, uses: [118, 116, 119, 117] },
+      "it is seat 1's turn",
+    )
+  })
+
+  it('ankan before drawing', () => {
+    expectKanThrows(
+      161,
+      tsumogiriRecord(161, 1).actions,
+      { type: 'ankan', seat: 1, uses: [118, 116, 119, 117] },
+      'ankan before seat 1 drew',
+    )
+  })
+
+  it('ankan while a claim discard is owed: a chi caller cannot kan', () => {
+    // Seed-1 chi anchor (see the chi/pon suites): South chis East's 100 with 98+106.
+    const chiTaken: readonly HandAction[] = [
+      ...tsumogiriRecord(1, 1).actions,
+      { type: 'chi', seat: 1, tile: 100, uses: [98, 106] },
+    ]
+    expectKanThrows(
+      1,
+      chiTaken,
+      { type: 'ankan', seat: 1, uses: [81, 83, 7, 79] },
+      'owes a discard for its claim',
+    )
+  })
+
+  it('duplicate ankan uses', () => {
+    expectKanThrows(
+      161,
+      ankanPrefix161,
+      { type: 'ankan', seat: 1, uses: [118, 118, 116, 119] },
+      'uses tile 118 twice',
+    )
+  })
+
+  it('ankan uses a tile neither held nor just drawn', () => {
+    // 115 (2z) belongs to another hand entirely; 117 is the genuine draw.
+    expectKanThrows(
+      161,
+      ankanPrefix161,
+      { type: 'ankan', seat: 1, uses: [118, 116, 119, 115] },
+      'neither holds nor just drew',
+    )
+  })
+
+  it('ankan of kinds that form no quad', () => {
+    // 12 = 4m, genuinely in South's hand, against the three 3z.
+    expectKanThrows(
+      161,
+      ankanPrefix161,
+      { type: 'ankan', seat: 1, uses: [118, 116, 119, 12] },
+      'do not form four of a kind',
+    )
+  })
+
+  it('shouminkan while the pon claim discard is still owed', () => {
+    expectKanThrows(
+      67,
+      [...kanPrefix67, PON67],
+      SHOUMINKAN67,
+      'owes a discard for its claim',
+    )
+  })
+
+  it('shouminkan before drawing', () => {
+    // After North's claim discard the turn is East's, who has not drawn.
+    expectKanThrows(
+      67,
+      [...kanPrefix67, PON67, { type: 'discard', seat: 3, tile: 87 }],
+      { type: 'shouminkan', seat: 0, tile: 96 },
+      'shouminkan before seat 0 drew',
+    )
+  })
+
+  it('shouminkan of a tile neither held nor just drawn — the pon’s claimed tile included', () => {
+    expectKanThrows(
+      67,
+      shouminkanPrefix67,
+      { type: 'shouminkan', seat: 3, tile: 91 },
+      'neither holds nor just drew',
+    )
+  })
+
+  it('shouminkan with no pon of that kind', () => {
+    // 129 (6z) is genuinely in North's hand, but North's only meld is the 5s pon.
+    expectKanThrows(
+      67,
+      shouminkanPrefix67,
+      { type: 'shouminkan', seat: 3, tile: 129 },
+      'has no pon of that kind',
+    )
+  })
+
+  it('a chi never qualifies as the pon a shouminkan extends', () => {
+    // Seed 1: South chis 100 (7s8s9s), discards 38, play goes around, South draws
+    // live[4] = 20 (6m) — and cannot shouminkan it into the chi-only meld list.
+    const prefix: readonly HandAction[] = [
+      ...tsumogiriRecord(1, 1).actions,
+      { type: 'chi', seat: 1, tile: 100, uses: [98, 106] },
+      { type: 'discard', seat: 1, tile: 38 },
+      { type: 'draw', seat: 2 },
+      { type: 'discard', seat: 2, tile: 60 }, // live[1] tsumogiri
+      { type: 'draw', seat: 3 },
+      { type: 'discard', seat: 3, tile: 14 }, // live[2] tsumogiri
+      { type: 'draw', seat: 0 },
+      { type: 'discard', seat: 0, tile: 66 }, // live[3] tsumogiri
+      { type: 'draw', seat: 1 },
+    ]
+    expectKanThrows(1, prefix, { type: 'shouminkan', seat: 1, tile: 20 }, 'has no pon of that kind')
+  })
+
+  it('kan on the haitei draw: the empty live wall leaves no replacement tile', () => {
+    // The 70th draw empties the live wall while the hand is still playing — the
+    // wall guard speaks before any tile validation (guard-order exhibit).
+    const prefix = maximalRecord(1).actions.slice(0, -1)
+    expectKanThrows(
+      1,
+      prefix,
+      { type: 'ankan', seat: 1, uses: [81, 83, 7, 79] },
+      'on an empty live wall',
+    )
+  })
+
+  it('a fifth kan finds no rinshan tile: four kans is the ceiling', () => {
+    // After the four-kan chain the turn seat draws normally, then attempts a
+    // fifth kan. The rinshan guard speaks before any uses validation, so the
+    // uses here are deliberate garbage (guard-order exhibit).
+    const prefix: readonly HandAction[] = [...fourKanChain(), { type: 'draw', seat: 0 }]
+    expectKanThrows(
+      FOUR_KAN_SEED,
+      prefix,
+      { type: 'ankan', seat: 0, uses: [0, 1, 2, 3] },
+      'no rinshan tile remaining — four kans already made',
+    )
+  })
+
+  it('kans after ryuukyoku: the ended hand accepts nothing', () => {
+    const done = maximalRecord(1).actions
+    expectKanThrows(1, done, DAIMINKAN67, 'already ended in ryuukyoku')
+    expectKanThrows(1, done, { type: 'ankan', seat: 1, uses: [81, 83, 7, 79] }, 'already ended in ryuukyoku')
+    expectKanThrows(1, done, { type: 'shouminkan', seat: 1, tile: 81 }, 'already ended in ryuukyoku')
   })
 })
