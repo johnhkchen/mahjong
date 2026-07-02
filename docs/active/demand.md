@@ -15,8 +15,6 @@ and off this board.
 
 ## Tier 1 — A finishable hand (P1: without this there is nothing)
 
-- **Draw / discard turn loop** — the East-to-North turn cycle: draw from the wall, sort, discard
-  to the pond, advance; wall-exhaustion (ryuukyoku) end. _(advances P1)_
 - **Legal calls (chi/pon/kan)** — call detection and interruption ordering, exposed melds, kan
   from the dead wall with a fresh dora, and the resulting turn skips. _(advances P1)_
 - **Agari + win detection** — recognize a complete hand (four sets + a pair, plus the special
