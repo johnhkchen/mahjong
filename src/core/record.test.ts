@@ -408,6 +408,113 @@ describe('chi/pon claims fold', () => {
   })
 })
 
+describe('illegal claims throw instead of folding silently', () => {
+  // Every case appends one bad action to a legally-reachable seed-1 prefix and
+  // asserts a loud RangeError NAMING THE ACTION INDEX. Guard order is frozen
+  // (window → seat → tile → uses distinct → uses held → shape), so several cases
+  // deliberately carry otherwise-valid parts to prove which guard speaks first.
+  // Frozen seed-1 facts as above: East tsumogiris 100 (8s) on turn one; South may
+  // chi it with 98+106 (7s+9s); East's tedashi of 82 (3s) is pon-able by South's
+  // 81/83 pair; West holds 97+104 (7s+9s) and the 73/74 1s pair.
+  const SEED = 1
+
+  /** Fold `prefix ++ [bad]`, assert RangeError naming both `fragment` and the index. */
+  function expectClaimThrows(prefix: readonly HandAction[], bad: HandAction, fragment: string) {
+    const fold = () => foldRecord({ seed: SEED, actions: [...prefix, bad] })
+    expect(fold).toThrow(RangeError)
+    expect(fold).toThrow(fragment)
+    expect(fold).toThrow(`action ${prefix.length}`)
+  }
+
+  const oneTurn = tsumogiriRecord(SEED, 1).actions // East draws 100 and tsumogiris it
+  const CHI: HandAction = { type: 'chi', seat: 1, tile: 100, uses: [98, 106] }
+  const chiTaken: readonly HandAction[] = [...oneTurn, CHI]
+  const ponPrefix: readonly HandAction[] = [
+    { type: 'draw', seat: 0 },
+    { type: 'discard', seat: 0, tile: 82 },
+  ]
+
+  it('claim before anything was discarded: no window exists at the deal', () => {
+    expectClaimThrows([], { type: 'pon', seat: 1, tile: 100, uses: [81, 83] }, 'no claimable discard')
+  })
+
+  it('stale claim: the very chi that was legal goes stale once the next seat draws', () => {
+    expectClaimThrows([...oneTurn, { type: 'draw', seat: 1 }], CHI, 'no claimable discard')
+  })
+
+  it('wrong-seat chi: West holds a valid run but is not the discarder’s next seat', () => {
+    expectClaimThrows(
+      oneTurn,
+      { type: 'chi', seat: 2, tile: 100, uses: [97, 104] },
+      "only seat 1 may chi seat 0's discard",
+    )
+  })
+
+  it('pon by the discarder of its own tile', () => {
+    expectClaimThrows(oneTurn, { type: 'pon', seat: 0, tile: 100, uses: [64, 53] }, 'its own discard')
+  })
+
+  it('wrong-tile claim: naming any tile but the fresh discard', () => {
+    expectClaimThrows(
+      oneTurn,
+      { type: 'chi', seat: 1, tile: 60, uses: [98, 106] },
+      'the claimable discard is tile 100',
+    )
+  })
+
+  it('duplicate uses: one physical tile cannot be exposed twice', () => {
+    expectClaimThrows(ponPrefix, { type: 'pon', seat: 1, tile: 82, uses: [81, 81] }, 'uses tile 81 twice')
+  })
+
+  it('unheld uses: a tile in another seat’s hand', () => {
+    expectClaimThrows(
+      ponPrefix,
+      { type: 'pon', seat: 1, tile: 82, uses: [81, 104] },
+      'uses tile 104, which seat 1 does not hold',
+    )
+  })
+
+  it('unheld uses: the claimed tile itself cannot double as a used tile', () => {
+    expectClaimThrows(
+      oneTurn,
+      { type: 'chi', seat: 1, tile: 100, uses: [98, 100] },
+      'uses tile 100, which seat 1 does not hold',
+    )
+  })
+
+  it('chi of kinds that form no run', () => {
+    // 91 = 5s: 5s + 7s around a claimed 8s is not consecutive.
+    expectClaimThrows(oneTurn, { type: 'chi', seat: 1, tile: 100, uses: [98, 91] }, 'do not form a run')
+  })
+
+  it('pon of kinds that form no triplet', () => {
+    // West's genuine 1s pair against the claimed 3s.
+    expectClaimThrows(ponPrefix, { type: 'pon', seat: 2, tile: 82, uses: [73, 74] }, 'do not form a triplet')
+  })
+
+  it('draw by the caller: a claim leaves a discard owed, never a draw', () => {
+    expectClaimThrows(chiTaken, { type: 'draw', seat: 1 }, 'owes a discard for its claim')
+  })
+
+  it('claim discard of a tile the caller no longer holds — its own melded tile included', () => {
+    expectClaimThrows(
+      chiTaken,
+      { type: 'discard', seat: 1, tile: 98 },
+      'a claim discard comes from the hand',
+    )
+  })
+
+  it('claim discard by anyone but the caller', () => {
+    expectClaimThrows(chiTaken, { type: 'discard', seat: 2, tile: 0 }, "seat 1's turn")
+  })
+
+  it('claims after ryuukyoku: the ended hand accepts nothing, so the final discard is never claimable', () => {
+    const done = maximalRecord(SEED).actions
+    expectClaimThrows(done, CHI, 'already ended in ryuukyoku')
+    expectClaimThrows(done, { type: 'pon', seat: 1, tile: 100, uses: [81, 83] }, 'already ended in ryuukyoku')
+  })
+})
+
 describe('illegal actions throw instead of folding silently', () => {
   // Every case appends one bad action to a legally-reachable prefix and asserts a
   // loud RangeError. Concrete tiles come from the frozen seed-1 fold: East's hand
