@@ -92,6 +92,18 @@ const gameArb = fc
     return record
   })
 
+/**
+ * A driven-to-completion game: exactly FULL_TURNS choices, so playRecord only stops
+ * when the offered set empties. That the map ever returns — rather than tripping
+ * playRecord's hard bound — is itself the termination proof the AC asks for.
+ */
+const fullGameArb = fc
+  .record({
+    seed: seedArb,
+    choices: fc.array(fc.nat(13), { minLength: FULL_TURNS, maxLength: FULL_TURNS }),
+  })
+  .map(({ seed, choices }) => playRecord(seed, choices))
+
 describe('conservation over random play', () => {
   it('hands + ponds + drawn + live + dead partition the 136 tile ids at every prefix (property)', () => {
     fc.assert(
@@ -103,6 +115,23 @@ describe('conservation over random play', () => {
         }
       }),
       { numRuns: 50 }, // each run folds every prefix — O(n²) applies; the timing dial
+    )
+  })
+})
+
+describe('termination', () => {
+  it('every randomly driven full game ends in ryuukyoku after exactly 140 actions (property)', () => {
+    fc.assert(
+      fc.property(fullGameArb, (record) => {
+        // Exact counts keep this non-vacuous: a generator stopping early fails here.
+        expect(record.actions.length).toBe(2 * FULL_TURNS)
+        const state = foldRecord(record)
+        expect(state.phase).toBe('ryuukyoku')
+        expect(state.live).toEqual([])
+        expect(state.drawn).toBeNull()
+        expect(legalActions(state)).toEqual([])
+        expect(state.ponds.flat().length).toBe(FULL_TURNS)
+      }),
     )
   })
 })
