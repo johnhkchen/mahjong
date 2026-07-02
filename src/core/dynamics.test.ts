@@ -2,82 +2,152 @@
 // proves step semantics against wall-derived expectations over tsumogiri-only records;
 // legal.test.ts locks the offered set to the step. This suite drives the two together —
 // a generator picks every move from legalActions, so folds reach what those suites
-// cannot: hands permuted by tedashi, mixed discard patterns, every seat's hand churned.
-// Because the generator drives THROUGH the code under test, properties here assert only
-// self-evident invariants — tile conservation, double-fold determinism, structural
-// termination, throw-on-mutation — never derived values (those stay wall-anchored in
-// record.test.ts). The generator is test-local by design: bots (the future runtime
-// consumer of random play) are a later epic with their own shape.
+// cannot: hands permuted by tedashi, melds churned by claims, walls shortened by kans,
+// every seat's hand carved by calls. Because the generator drives THROUGH the code
+// under test, properties here assert only self-evident invariants — tile conservation,
+// double-fold determinism, structural termination, throw-on-mutation — never derived
+// values (those stay wall-anchored in record.test.ts). Two trajectory sources: fc
+// arbitraries sampling the FULL offered set uniformly by index, and a deterministic
+// greedy-call corpus (kans first, then any call) whose coverage of every call form is
+// asserted — call density is a pinned fact, never an fc statistic. The generators are
+// test-local by design: bots (the future runtime consumer of random play) are a later
+// epic with their own shape.
 
 import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
 import {
+  DEAD_WALL_SIZE,
   DEAL_SIZE,
   LIVE_WALL_SIZE,
   SEAT_COUNT,
   TILE_COUNT,
+  buildWall,
+  createRng,
+  dealHands,
   foldRecord,
   legalActions,
+  nextInt,
+  partitionWall,
   type HandAction,
   type HandRecord,
   type Seat,
   type TableState,
+  type TileId,
 } from './index'
 
 /** The canonical seed domain: integers [0, 2^32). */
 const seedArb = fc.integer({ min: 0, max: 0xffffffff })
 
-/** Complete draw+discard turns in a full hand: one per live-wall tile after the deal. */
+/** Complete draw+discard turns in a call-free full hand: one per post-deal live tile. */
 const FULL_TURNS = LIVE_WALL_SIZE - DEAL_SIZE // 70
 
+/** The meld ceiling across the table: four melds per seat. */
+const MAX_MELDS = 4 * SEAT_COUNT
+
 /**
- * The generator's slice of the offered set: draws and discards only. legalActions now
- * offers claims and kans too, but random trajectories over the full call vocabulary
- * are T-004-01-04's charter — until that ticket grows this generator, claims stay out
- * so every property below keeps its exact draw/discard shape (140-action games, one
- * pond tile per draw, draw/discard-only mutants).
+ * The hard action bound, from the vocabulary's own arithmetic: every action is a
+ * draw, a kan, a chi/pon, or a discard; draws + kans ≤ FULL_TURNS (each consumes one
+ * live tile — kans "eat the wall" by taking a draw's place); every draw, kan, and
+ * chi/pon obliges exactly one discard; chi/pons ≤ MAX_MELDS − kans. So a legal game
+ * holds at most 2·FULL_TURNS + 2·MAX_MELDS = 172 actions; the +2 headroom means the
+ * bound tripping is unambiguously a non-terminating turn loop, not a long legal game.
  */
-function drawsAndDiscards(offered: readonly HandAction[]): HandAction[] {
-  return offered.filter((a) => a.type === 'draw' || a.type === 'discard')
+const ACTION_BOUND = 2 * FULL_TURNS + 2 * MAX_MELDS + 2
+
+/**
+ * The choice domain: 20 values covers the longest real offering (14 discards plus
+ * kan offers post-draw ≈ 18), so no offer index is unreachable through the modulo —
+ * fc.nat(13) would never pick index 14+, silently suppressing every kan offer.
+ */
+const CHOICE_MAX = 19
+
+/** The call vocabulary — every action form that is not a draw or a discard. */
+function isCall(action: HandAction): boolean {
+  return action.type !== 'draw' && action.type !== 'discard'
 }
 
 /**
- * Drive a game from the dealt table, choosing every move from legalActions' draw/
- * discard slice: one choice is consumed per post-draw point (the only point offering
- * more than one such action), so `choices.length` bounds the game at that many
- * complete turns; the walk stops cleanly pre-draw when choices run out, or when the
- * offered set empties (ryuukyoku). State only ever advances by refolding the longer
- * record — foldRecord stays the single authority, no step logic is reimplemented
- * here. The hard bound converts any future non-terminating turn loop into a thrown
- * error instead of a hung test run.
+ * Drive a game from the dealt table, choosing every move from the FULL offered set:
+ * forced points (a single offer — the claimless pre-draw draw, mostly) auto-play, and
+ * each multi-offer decision point consumes one choice by index — so claims and kans
+ * are sampled exactly as legalActions offers them, and `choices` is a decision list,
+ * not an action list. The walk stops cleanly when choices run out at a decision
+ * point, or when the offered set empties (ryuukyoku). State only ever advances by
+ * refolding the longer record — foldRecord stays the single authority, no step logic
+ * is reimplemented here. The hard bound converts any future non-terminating turn
+ * loop into a thrown error instead of a hung test run.
  */
 function playRecord(seed: number, choices: readonly number[]): HandRecord {
   const actions: HandAction[] = []
-  const bound = 2 * FULL_TURNS + 2
   let c = 0
   for (;;) {
-    const legal = drawsAndDiscards(legalActions(foldRecord({ seed, actions })))
+    const legal = legalActions(foldRecord({ seed, actions }))
     if (legal.length === 0) return { seed, actions }
     if (legal.length === 1) {
-      if (c >= choices.length) return { seed, actions }
       actions.push(legal[0])
     } else {
+      if (c >= choices.length) return { seed, actions }
       actions.push(legal[choices[c++] % legal.length])
     }
-    if (actions.length > bound) {
-      throw new Error(`playRecord exceeded ${bound} actions — the turn loop is not terminating`)
+    if (actions.length > ACTION_BOUND) {
+      throw new Error(
+        `playRecord exceeded ${ACTION_BOUND} actions — the turn loop is not terminating`,
+      )
     }
   }
 }
 
 /**
- * The five-zone flatten of a state — hands, ponds, the held-apart drawn tile, live,
- * dead: the zones TableState documents as partitioning the 136 tile ids at all times.
- * At a pre-draw prefix drawn is null and this IS the AC's literal four-zone form.
+ * The deterministic greedy-call driver: at every point play a kan if one is offered,
+ * else any claim, else whatever is offered — picking inside the pool with core's own
+ * seeded rng stream, so the corpus is reproducible arithmetic, not fc sampling.
+ * Greed maximizes call density (any concealed quad kans immediately, any pon
+ * upgrades the moment its fourth copy surfaces), which is what makes the corpus's
+ * every-call-form coverage assertable rather than statistical. Runs to ryuukyoku.
+ */
+function playGreedy(seed: number): HandRecord {
+  const rng = createRng(seed)
+  const actions: HandAction[] = []
+  for (;;) {
+    const legal = legalActions(foldRecord({ seed, actions }))
+    if (legal.length === 0) return { seed, actions }
+    const kans = legal.filter(
+      (a) => a.type === 'daiminkan' || a.type === 'ankan' || a.type === 'shouminkan',
+    )
+    const calls = kans.length > 0 ? kans : legal.filter(isCall)
+    const pool = calls.length > 0 ? calls : legal
+    actions.push(pool[nextInt(rng, pool.length)])
+    if (actions.length > ACTION_BOUND) {
+      throw new Error(
+        `playGreedy exceeded ${ACTION_BOUND} actions — the turn loop is not terminating`,
+      )
+    }
+  }
+}
+
+/**
+ * The greedy corpus: one full game per seed. The range is frozen empirically —
+ * ankan is the rare form (greedy pons eat copies before concealed quads assemble;
+ * seeds 63/67/69 are the only carriers under 100) — and the coverage test asserts
+ * every call form appears in the union, so a regression that stops generating some
+ * form (or a range edit that loses one) fails loudly instead of letting the
+ * call-dense suites go vacuous.
+ */
+const GREEDY_CORPUS_SEEDS: readonly number[] = Array.from({ length: 100 }, (_, i) => i)
+const greedyCorpus: readonly HandRecord[] = GREEDY_CORPUS_SEEDS.map((seed) => playGreedy(seed))
+
+/**
+ * The six-zone flatten of a state — hands, melds' own tiles, ponds, the held-apart
+ * drawn tile, live, dead: the zones TableState documents as partitioning the 136
+ * tile ids at all times. A meld contributes only its `own` tiles; the claimed tile
+ * stays counted in the discarder's pond (the Meld contract), so the zones stay
+ * disjoint by construction and the AC's hands+melds+ponds+drawn+live+dead form
+ * reads off literally.
  */
 function allZones(state: TableState): number[] {
   return [
     ...state.hands.flat(),
+    ...state.melds.flat().flatMap((meld) => meld.own),
     ...state.ponds.flat(),
     ...(state.drawn === null ? [] : [state.drawn]),
     ...state.live,
@@ -85,83 +155,150 @@ function allZones(state: TableState): number[] {
   ]
 }
 
+/** Conservation at EVERY log prefix: 136 tiles, all distinct, at each fold point. */
+function expectConserved(record: HandRecord): void {
+  for (let len = 0; len <= record.actions.length; len++) {
+    const everything = allZones(
+      foldRecord({ seed: record.seed, actions: record.actions.slice(0, len) }),
+    )
+    expect(everything.length).toBe(TILE_COUNT)
+    expect(new Set(everything).size).toBe(TILE_COUNT)
+  }
+}
+
+/** Tally a log by action type, for the termination identities. */
+function countTypes(actions: readonly HandAction[]): Record<HandAction['type'], number> {
+  const counts = { draw: 0, discard: 0, chi: 0, pon: 0, daiminkan: 0, ankan: 0, shouminkan: 0 }
+  for (const action of actions) counts[action.type]++
+  return counts
+}
+
 /**
- * A random-legal game: up to FULL_TURNS complete turns of legalActions-driven play,
- * optionally left with a dangling draw so post-draw states are first-class inputs.
- * fc.nat(13) matches the largest offered set (14 discards), so the modulo in
- * playRecord is usually the identity and shrinking maps onto low hand indexes.
+ * The end-of-game identities — exact equalities, so a generator that stops early or
+ * a fold that loses a tile breaks an ===, keeping termination non-vacuous the way
+ * the old exact-140 count did before kans made action counts trajectory-dependent:
+ * draws + kans === FULL_TURNS (each consumed one live tile — the kan-eats-the-wall
+ * fact); discards === draws + daiminkans + chi/pons — every drawn tile and every
+ * claim obliges one discard, EXCEPT that an ankan/shouminkan absorbs the drawn tile
+ * of the draw before it (its rinshan re-fills the slot), so closed-kan forms add no
+ * obligation of their own while daiminkan (folding instead of a draw) does; melds
+ * count chi+pon+daiminkan+ankan (a shouminkan replaces its pon in place).
+ */
+function expectEndIdentities(record: HandRecord, state: TableState): void {
+  const n = countTypes(record.actions)
+  const kans = n.daiminkan + n.ankan + n.shouminkan
+  expect(n.draw + kans).toBe(FULL_TURNS)
+  expect(n.discard).toBe(n.draw + n.daiminkan + n.chi + n.pon)
+  expect(state.ponds.flat().length).toBe(n.discard)
+  expect(state.melds.flat().length).toBe(n.chi + n.pon + n.daiminkan + n.ankan)
+}
+
+/**
+ * A random-legal game: up to a full game's worth of decisions over the full offered
+ * set, optionally left with a dangling draw so post-draw states stay first-class
+ * final states even when the walk stops at a claimless pre-draw point.
  */
 const gameArb = fc
   .record({
     seed: seedArb,
-    choices: fc.array(fc.nat(13), { maxLength: FULL_TURNS }),
+    choices: fc.array(fc.nat(CHOICE_MAX), { maxLength: ACTION_BOUND }),
     dangle: fc.boolean(),
   })
   .map(({ seed, choices, dangle }) => {
     const record = playRecord(seed, choices)
     if (dangle) {
-      const legal = drawsAndDiscards(legalActions(foldRecord(record)))
-      if (legal.length === 1) return { seed, actions: [...record.actions, legal[0]] }
+      const offered = legalActions(foldRecord(record))
+      if (offered.length > 0 && offered[0].type === 'draw') {
+        return { seed, actions: [...record.actions, offered[0]] }
+      }
     }
     return record
   })
 
 /**
- * A driven-to-completion game: exactly FULL_TURNS choices, so playRecord only stops
- * when the offered set empties. That the map ever returns — rather than tripping
- * playRecord's hard bound — is itself the termination proof the AC asks for.
+ * A driven-to-completion game: ACTION_BOUND choices can never be exhausted by a
+ * legal game (≤ 172 actions, decisions ≤ actions), so playRecord only stops when
+ * the offered set empties. That the map ever returns — rather than tripping the
+ * hard bound — is itself the termination proof the AC asks for, now with claims
+ * and kans in the trajectory space.
  */
 const fullGameArb = fc
   .record({
     seed: seedArb,
-    choices: fc.array(fc.nat(13), { minLength: FULL_TURNS, maxLength: FULL_TURNS }),
+    choices: fc.array(fc.nat(CHOICE_MAX), { minLength: ACTION_BOUND, maxLength: ACTION_BOUND }),
   })
   .map(({ seed, choices }) => playRecord(seed, choices))
 
+/** An fc handle on the call-dense corpus, for the claim-hungry mutation operators. */
+const corpusGameArb = fc.nat(greedyCorpus.length - 1).map((i) => greedyCorpus[i])
+
+/** Random-legal or corpus: operators that need claims in the log sample from both. */
+const anyGameArb = fc.oneof(gameArb, corpusGameArb)
+
 describe('conservation over random play', () => {
-  it('hands + ponds + drawn + live + dead partition the 136 tile ids at every prefix (property)', () => {
+  it('hands + melds + ponds + drawn + live + dead partition the 136 tile ids at every prefix (property)', () => {
     fc.assert(
-      fc.property(gameArb, ({ seed, actions }) => {
-        for (let len = 0; len <= actions.length; len++) {
-          const everything = allZones(foldRecord({ seed, actions: actions.slice(0, len) }))
-          expect(everything.length).toBe(TILE_COUNT)
-          expect(new Set(everything).size).toBe(TILE_COUNT)
-        }
+      fc.property(gameArb, (record) => {
+        expectConserved(record)
       }),
       { numRuns: 50 }, // each run folds every prefix — O(n²) applies; the timing dial
     )
   })
+
+  it('the greedy corpus conserves the partition at every prefix of every game', () => {
+    for (const record of greedyCorpus) expectConserved(record)
+  })
 })
 
 describe('termination', () => {
-  it('every randomly driven full game ends in ryuukyoku after exactly 140 actions (property)', () => {
+  it('every randomly driven full game ends in ryuukyoku with the closed end shape (property)', () => {
     fc.assert(
       fc.property(fullGameArb, (record) => {
-        // Exact counts keep this non-vacuous: a generator stopping early fails here.
-        expect(record.actions.length).toBe(2 * FULL_TURNS)
         const state = foldRecord(record)
         expect(state.phase).toBe('ryuukyoku')
         expect(state.live).toEqual([])
         expect(state.drawn).toBeNull()
+        expect(state.mustDiscard).toBe(false)
+        expect(state.claimable).toBeNull()
+        expect(state.dead.length).toBe(DEAD_WALL_SIZE)
         expect(legalActions(state)).toEqual([])
-        expect(state.ponds.flat().length).toBe(FULL_TURNS)
+        expectEndIdentities(record, state)
       }),
+      { numRuns: 60 }, // every run plays a whole game through per-action refolds
     )
+  })
+
+  it('the greedy corpus terminates, satisfies the identities, and covers every call form', () => {
+    const seen = new Set<string>()
+    for (const record of greedyCorpus) {
+      const state = foldRecord(record)
+      expect(state.phase).toBe('ryuukyoku')
+      expect(state.live).toEqual([])
+      expectEndIdentities(record, state)
+      for (const action of record.actions) seen.add(action.type)
+    }
+    // The corpus's reason to exist: every call form actually occurs in random-legal
+    // play — including shouminkan, whose generative coverage -03 flagged as missing.
+    for (const form of ['chi', 'pon', 'daiminkan', 'ankan', 'shouminkan']) {
+      expect(seen.has(form), `the greedy corpus generated no ${form}`).toBe(true)
+    }
   })
 })
 
 describe('fold determinism over random play', () => {
   it('folding the same record twice yields deeply-equal state in fresh arrays (property)', () => {
     // record.test.ts proves this exhaustively for tsumogiri records; the new ground
-    // here is tedashi-bearing records, whose folds splice and permute the hands.
+    // here is claim-bearing records, whose folds splice hands into melds and jump
+    // turns — determinism must survive the whole widened vocabulary.
     fc.assert(
-      fc.property(gameArb, ({ seed, actions }) => {
+      fc.property(anyGameArb, ({ seed, actions }) => {
         const record = { seed, actions }
         const first = foldRecord(record)
         const second = foldRecord(record)
         expect(second).toEqual(first)
         expect(second.hands).not.toBe(first.hands)
         expect(second.ponds).not.toBe(first.ponds)
+        expect(second.melds).not.toBe(first.melds)
         expect(second.live).not.toBe(first.live)
       }),
     )
@@ -183,8 +320,8 @@ function keyOf(action: HandAction): string {
  * The mutation assertion: splice `mutant` between a legally-reachable prefix and the
  * rest of the record, then require BOTH halves of the contract to reject it — absent
  * from the offered set at that point, and thrown by the fold (before the suffix is
- * ever reached). Callers guarantee the mutant is outside legality; the only operator
- * that can accidentally stay legal (tile retarget) fc.pre-filters first.
+ * ever reached). Callers guarantee the mutant is outside legality; operators that
+ * can accidentally stay legal (tile/uses retargets) fc.pre-filter first.
  */
 function assertMutantThrows(
   seed: number,
@@ -197,37 +334,77 @@ function assertMutantThrows(
   expect(() => foldRecord({ seed, actions: [...prefix, mutant, ...suffix] })).toThrow(RangeError)
 }
 
+/** The same action re-seated — the shape-preserving wrong-seat mutation. */
+function withSeat(action: HandAction, seat: Seat): HandAction {
+  switch (action.type) {
+    case 'draw':
+      return { type: 'draw', seat }
+    case 'discard':
+      return { type: 'discard', seat, tile: action.tile }
+    case 'chi':
+      return { type: 'chi', seat, tile: action.tile, uses: action.uses }
+    case 'pon':
+      return { type: 'pon', seat, tile: action.tile, uses: action.uses }
+    case 'daiminkan':
+      return { type: 'daiminkan', seat, tile: action.tile, uses: action.uses }
+    case 'ankan':
+      return { type: 'ankan', seat, uses: action.uses }
+    case 'shouminkan':
+      return { type: 'shouminkan', seat, tile: action.tile }
+  }
+}
+
+/** The claim forms whose `tile` must name the open window's fresh discard. */
+type WindowClaim = Extract<HandAction, { type: 'chi' | 'pon' | 'daiminkan' }>
+
+/** Indexed occurrences of the window-bound claim forms in a log. */
+function windowClaims(
+  actions: readonly HandAction[],
+): ReadonlyArray<readonly [WindowClaim, number]> {
+  return actions.flatMap((a, i) =>
+    a.type === 'chi' || a.type === 'pon' || a.type === 'daiminkan' ? [[a, i] as const] : [],
+  )
+}
+
 describe('mutated sequences throw', () => {
   // Each operator moves ONE action of a random-legal record one rule outside
-  // legality, spanning every guard in the step: wrong seat, out-of-sequence
-  // draw/discard, unheld tile, action past the end.
+  // legality, spanning the AC's matrix: wrong seat, wrong tiles (discard, claim
+  // tile, claim uses), stale discard, out-of-sequence forms, action past the end —
+  // dead-wall exhaustion follows as directed anchors, since random play cannot
+  // reach four kans or a haitei quad.
 
   it('seat bump: any action reassigned to another seat throws (property)', () => {
     fc.assert(
-      fc.property(gameArb, fc.nat(), fc.integer({ min: 1, max: 3 }), ({ seed, actions }, at, bump) => {
-        fc.pre(actions.length > 0)
-        const i = at % actions.length
-        const action = actions[i]
-        const seat = ((action.seat + bump) % SEAT_COUNT) as Seat
-        // The generator only emits draws and discards (drawsAndDiscards filters).
-        const mutant: HandAction =
-          action.type === 'discard' ? { type: 'discard', seat, tile: action.tile } : { type: 'draw', seat }
-        assertMutantThrows(seed, actions.slice(0, i), mutant, actions.slice(i + 1))
-      }),
+      fc.property(
+        anyGameArb,
+        fc.nat(),
+        fc.integer({ min: 1, max: 3 }),
+        ({ seed, actions }, at, bump) => {
+          fc.pre(actions.length > 0)
+          const i = at % actions.length
+          const action = actions[i]
+          const seat = ((action.seat + bump) % SEAT_COUNT) as Seat
+          // Always illegal: draws/discards/ankans/shouminkans hit the turn guard, a
+          // bumped chi is never the window's chi seat, and a bumped pon/daiminkan
+          // either claims its own discard or names uses only the original seat holds.
+          assertMutantThrows(seed, actions.slice(0, i), withSeat(action, seat), actions.slice(i + 1))
+        },
+      ),
     )
   })
 
   it('type flip: a draw turned into a discard, or a discard into a draw, throws (property)', () => {
     fc.assert(
       fc.property(gameArb, fc.nat(), fc.nat(TILE_COUNT - 1), ({ seed, actions }, at, tile) => {
-        fc.pre(actions.length > 0)
-        const i = at % actions.length
+        const spots = actions.flatMap((a, i) => (a.type === 'draw' || a.type === 'discard' ? [i] : []))
+        fc.pre(spots.length > 0)
+        const i = spots[at % spots.length]
         const action = actions[i]
         // A discard at a pre-draw point (any tile, even one genuinely held) and a
-        // draw at a post-draw point are both out of sequence.
+        // draw at a post-draw or claim-discard point are both out of sequence.
         const mutant: HandAction =
           action.type === 'draw'
-            ? { type: 'discard', seat: action.seat, tile }
+            ? { type: 'discard', seat: action.seat, tile: tile as TileId }
             : { type: 'draw', seat: action.seat }
         assertMutantThrows(seed, actions.slice(0, i), mutant, actions.slice(i + 1))
       }),
@@ -236,11 +413,11 @@ describe('mutated sequences throw', () => {
 
   it('tile retarget: a discard changed to a tile neither held nor just drawn throws (property)', () => {
     fc.assert(
-      fc.property(gameArb, fc.nat(), fc.nat(TILE_COUNT - 1), ({ seed, actions }, at, tile) => {
+      fc.property(anyGameArb, fc.nat(), fc.nat(TILE_COUNT - 1), ({ seed, actions }, at, tile) => {
         const discards = actions.flatMap((a, i) => (a.type === 'discard' ? [[a, i] as const] : []))
         fc.pre(discards.length > 0)
         const [action, i] = discards[at % discards.length]
-        const mutant: HandAction = { type: 'discard', seat: action.seat, tile }
+        const mutant: HandAction = { type: 'discard', seat: action.seat, tile: tile as TileId }
         // ~14 of 136 retargets land on another legally discardable tile — still a
         // legal record, so not a counterexample candidate; discard those runs.
         const offered = legalActions(foldRecord({ seed, actions: actions.slice(0, i) }))
@@ -250,31 +427,216 @@ describe('mutated sequences throw', () => {
     )
   })
 
+  it('claim retarget: a claim naming a tile other than the fresh discard throws (property)', () => {
+    fc.assert(
+      fc.property(anyGameArb, fc.nat(), fc.nat(TILE_COUNT - 1), ({ seed, actions }, at, tileRaw) => {
+        const claims = windowClaims(actions)
+        fc.pre(claims.length > 0)
+        const [action, i] = claims[at % claims.length]
+        const tile = tileRaw as TileId
+        // The window guard compares physical ids, so ANY other tile — even another
+        // copy of the same kind — is a corrupt claim; only the identity retarget
+        // stays legal, and is excluded.
+        fc.pre(tile !== action.tile)
+        const mutant: HandAction = { ...action, tile }
+        assertMutantThrows(seed, actions.slice(0, i), mutant, actions.slice(i + 1))
+      }),
+    )
+  })
+
+  it('uses retarget: a claim or kan exposing a wrong tile throws (property)', () => {
+    fc.assert(
+      fc.property(
+        anyGameArb,
+        fc.nat(),
+        fc.nat(),
+        fc.nat(TILE_COUNT - 1),
+        ({ seed, actions }, at, slot, tileRaw) => {
+          const claims = actions.flatMap((a, i) => ('uses' in a ? [[a, i] as const] : []))
+          fc.pre(claims.length > 0)
+          const [action, i] = claims[at % claims.length]
+          const uses = [...action.uses]
+          uses[slot % uses.length] = tileRaw as TileId
+          // Arity is preserved by the modulo, so the cast only widens the tuple type.
+          const mutant = { ...action, uses: uses as unknown as typeof action.uses } as HandAction
+          // A retarget onto another held copy of the right kind is still legal —
+          // pre-filter through the offered set, the discard-retarget precedent.
+          const offered = legalActions(foldRecord({ seed, actions: actions.slice(0, i) }))
+          fc.pre(!offered.some((a) => keyOf(a) === keyOf(mutant)))
+          assertMutantThrows(seed, actions.slice(0, i), mutant, actions.slice(i + 1))
+        },
+      ),
+    )
+  })
+
+  it('stale claim: a claim delayed past the next draw throws (property)', () => {
+    fc.assert(
+      fc.property(anyGameArb, fc.nat(), ({ seed, actions }, at) => {
+        const claims = windowClaims(actions)
+        fc.pre(claims.length > 0)
+        const [action, i] = claims[at % claims.length]
+        // The draw is offered first at every claim-window point; taking it closes
+        // the window, so the once-legal claim now meets a stale discard.
+        const state = foldRecord({ seed, actions: actions.slice(0, i) })
+        const draw: HandAction = { type: 'draw', seat: state.turn }
+        assertMutantThrows(seed, [...actions.slice(0, i), draw], action, [])
+      }),
+    )
+  })
+
   it('duplicate: replaying an action immediately after itself throws (property)', () => {
     fc.assert(
-      fc.property(gameArb, fc.nat(), ({ seed, actions }, at) => {
+      fc.property(anyGameArb, fc.nat(), ({ seed, actions }, at) => {
         fc.pre(actions.length > 0)
         const i = at % actions.length
         // A doubled draw is a second draw in a row; a doubled discard hits the next
-        // seat's turn (or the ended hand) — outside legality either way.
+        // seat's turn (or the ended hand); a doubled chi/pon/daiminkan meets its own
+        // consumed window; a doubled kan names uses already melded away.
         assertMutantThrows(seed, actions.slice(0, i + 1), actions[i], actions.slice(i + 1))
       }),
     )
   })
 
-  it('append after ryuukyoku: any action past the end of a full game throws (property)', () => {
+  it('append after ryuukyoku: any action form past the end of a full game throws (property)', () => {
     fc.assert(
       fc.property(
         fullGameArb,
+        fc.nat(6),
         fc.nat(SEAT_COUNT - 1),
-        fc.boolean(),
         fc.nat(TILE_COUNT - 1),
-        (record, seatRaw, isDraw, tile) => {
+        fc.array(fc.nat(TILE_COUNT - 1), { minLength: 4, maxLength: 4 }),
+        (record, form, seatRaw, tileRaw, us) => {
           const seat = seatRaw as Seat
-          const mutant: HandAction = isDraw ? { type: 'draw', seat } : { type: 'discard', seat, tile }
-          assertMutantThrows(record.seed, record.actions, mutant, [])
+          const tile = tileRaw as TileId
+          const u = us as TileId[]
+          const menu: HandAction[] = [
+            { type: 'draw', seat },
+            { type: 'discard', seat, tile },
+            { type: 'chi', seat, tile, uses: [u[0], u[1]] },
+            { type: 'pon', seat, tile, uses: [u[0], u[1]] },
+            { type: 'daiminkan', seat, tile, uses: [u[0], u[1], u[2]] },
+            { type: 'ankan', seat, uses: [u[0], u[1], u[2], u[3]] },
+            { type: 'shouminkan', seat, tile },
+          ]
+          assertMutantThrows(record.seed, record.actions, menu[form], [])
         },
       ),
+      { numRuns: 60 }, // every run plays a whole game through per-action refolds
+    )
+  })
+})
+
+// ————————————————————————————————————————————————————————————————————————————
+// Dead-wall exhaustion anchors — mirrored from legal.test.ts (frozen, scratchpad-
+// derived, never regenerate): random play cannot reach four kans or a haitei quad,
+// so the exhaustion arm of the matrix is pinned on constructed states whose kan
+// material is real — the same states the agreement suite proved suppression on.
+// ————————————————————————————————————————————————————————————————————————————
+
+/** The post-deal live wall for a seed, from the frozen upstream contracts. */
+function dealtLive(seed: number): number[] {
+  return dealHands(partitionWall(buildWall(seed)).live).live
+}
+
+/** The frozen 14-tile dead wall for a seed, same upstream derivation. */
+function dealtDead(seed: number): number[] {
+  return partitionWall(buildWall(seed)).dead
+}
+
+/** A tsumogiri-only record: `turns` draw+discard turns, the i-th tile live[i]. */
+function tsumogiriRecord(seed: number, turns: number): HandRecord {
+  const live = dealtLive(seed)
+  const actions: HandAction[] = []
+  for (let i = 0; i < turns; i++) {
+    const seat = (i % SEAT_COUNT) as Seat
+    actions.push({ type: 'draw', seat }, { type: 'discard', seat, tile: live[i] })
+  }
+  return { seed, actions }
+}
+
+const FOUR_KAN_SEED = 101033
+const FOUR_KAN_GEOMS: ReadonlyArray<{
+  holder: Seat
+  source: Seat
+  fourth: TileId
+  uses: readonly [TileId, TileId, TileId]
+}> = [
+  { holder: 0, source: 2, fourth: 6, uses: [7, 4, 5] },
+  { holder: 0, source: 1, fourth: 69, uses: [68, 70, 71] },
+  { holder: 1, source: 0, fourth: 16, uses: [18, 17, 19] },
+  { holder: 3, source: 0, fourth: 130, uses: [129, 131, 128] },
+]
+
+/** The seed-101033 four-daiminkan chain: tsumogiri to each source, kan, rinshan out. */
+function fourKanChain(): HandAction[] {
+  const live = dealtLive(FOUR_KAN_SEED)
+  const dead = dealtDead(FOUR_KAN_SEED)
+  const actions: HandAction[] = []
+  let turn: Seat = 0
+  let liveAt = 0
+  FOUR_KAN_GEOMS.forEach((geom, kan) => {
+    while (turn !== geom.source) {
+      actions.push(
+        { type: 'draw', seat: turn },
+        { type: 'discard', seat: turn, tile: live[liveAt++] },
+      )
+      turn = ((turn + 1) % SEAT_COUNT) as Seat
+    }
+    actions.push(
+      { type: 'draw', seat: geom.source },
+      { type: 'discard', seat: geom.source, tile: geom.fourth },
+      { type: 'daiminkan', seat: geom.holder, tile: geom.fourth, uses: geom.uses },
+      { type: 'discard', seat: geom.holder, tile: dead[kan] }, // rinshan tsumogiri
+    )
+    liveAt++
+    turn = ((geom.holder + 1) % SEAT_COUNT) as Seat
+  })
+  return actions
+}
+
+/**
+ * The fifth-kan window: the four-kan chain, then pure tsumogiri until tile 122 —
+ * the fourth 4z — lands as a fresh discard. West still holds copies 120/121/123,
+ * so the window has real daiminkan material while the kan ceiling bars it.
+ */
+function fifthKanWindowRecord(): readonly HandAction[] {
+  const live = dealtLive(FOUR_KAN_SEED)
+  const actions = fourKanChain()
+  let turn: Seat = 0 // the last holder was North; play resumes at East
+  let liveAt = 11
+  for (;;) {
+    const tile = live[liveAt++]
+    actions.push({ type: 'draw', seat: turn }, { type: 'discard', seat: turn, tile })
+    if (tile === 122) return actions
+    turn = ((turn + 1) % SEAT_COUNT) as Seat
+  }
+}
+
+describe('dead-wall exhaustion throws', () => {
+  it('a fifth kan at the seed-101033 window is unoffered and throws the rinshan guard', () => {
+    const actions = fifthKanWindowRecord()
+    const offered = new Set(legalActions(foldRecord({ seed: FOUR_KAN_SEED, actions })).map(keyOf))
+    const mutant: HandAction = { type: 'daiminkan', seat: 2, tile: 122, uses: [120, 121, 123] }
+    expect(offered.has(keyOf(mutant))).toBe(false)
+    // Non-vacuity: the same three copies pon — the window's kan material is real,
+    // only the exhausted dead wall bars the kan.
+    expect(offered.has(keyOf({ type: 'pon', seat: 2, tile: 122, uses: [120, 121] }))).toBe(true)
+    expect(() => foldRecord({ seed: FOUR_KAN_SEED, actions: [...actions, mutant] })).toThrow(
+      'no rinshan tile remaining',
+    )
+  })
+
+  it('an ankan on the emptied live wall at the seed-1004 haitei draw is unoffered and throws', () => {
+    // South's dealt hand holds the 5p quad [55,52,53,54]; dropping the final discard
+    // leaves the haitei draw in hand with the live wall empty — no replacement exists.
+    const actions = tsumogiriRecord(1004, FULL_TURNS).actions.slice(0, -1)
+    const state = foldRecord({ seed: 1004, actions })
+    expect(state.live).toEqual([])
+    expect(state.phase).toBe('playing')
+    const mutant: HandAction = { type: 'ankan', seat: 1, uses: [55, 52, 53, 54] }
+    expect(new Set(legalActions(state).map(keyOf)).has(keyOf(mutant))).toBe(false)
+    expect(() => foldRecord({ seed: 1004, actions: [...actions, mutant] })).toThrow(
+      'on an empty live wall',
     )
   })
 })
