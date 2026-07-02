@@ -34,6 +34,10 @@ describe('hand-record fold entrypoint', () => {
           dead: partition.dead,
           doraIndicator: partition.doraIndicator,
           dora: doraKindOf(kindOf(partition.doraIndicator)),
+          ponds: [[], [], [], []],
+          turn: 0,
+          drawn: null,
+          phase: 'playing',
         }
         expect(foldRecord(recordOf(seed))).toEqual(expected)
       }),

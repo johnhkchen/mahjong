@@ -7,17 +7,29 @@
 import { kindOf, type TileId, type TileKind } from './tiles'
 import { buildWall, partitionWall } from './wall'
 import { doraKindOf } from './dora'
-import { dealHands } from './deal'
+import { dealHands, SEAT_COUNT, type Seat } from './deal'
 
 /**
  * The element type of the ordered action log — the engine's action vocabulary.
- * Currently EMPTY: no draw, discard, or call exists in this slice, so the only
- * well-typed log is the empty array. Draw/discard/call tickets widen this union; the
- * name is the extension point, deliberately not stubbed with shapes — the action
- * encoding, once defined, becomes part of the replay contract and must be designed by
- * the tickets that own it.
+ *
+ * CONTRACT FREEZE: this encoding is part of the replay format, like the rng stream
+ * and the wall orientation — extend-only (calls, riichi, and agari tickets add
+ * members; existing members never change shape). Conventions frozen here:
+ *
+ * - Every action carries the acting `seat`. The seat is derivable from the fold's
+ *   turn pointer, so the tag is deliberate redundancy: a wrong-seat action in a log
+ *   is corruption, and the fold throws loudly instead of folding silently.
+ * - `draw` records NO tile. The seed's wall order is the single authority for what
+ *   is drawn (a hand is its record); recording the tile would create a second
+ *   authority that could disagree with the first.
+ * - `discard.tile` is the physical TileId — tsumogiri is not encoded, it is derived
+ *   at fold time (the discarded tile equals the one just drawn). Id RANGE validation
+ *   stays at the future log-parser boundary (the TileId rule in tiles.ts); the fold
+ *   validates semantics — the tile must be in the acting seat's hand or just drawn.
  */
-export type HandAction = never
+export type HandAction =
+  | { readonly type: 'draw'; readonly seat: Seat }
+  | { readonly type: 'discard'; readonly seat: Seat; readonly tile: TileId }
 
 /**
  * A hand is this pair and nothing else. The seed determines the wall order (frozen rng
@@ -32,7 +44,7 @@ export interface HandRecord {
    * are validated at the future log-parser boundary, per the TileId precedent.
    */
   seed: number
-  /** The ordered action log — today, necessarily empty (see HandAction). */
+  /** The ordered action log — the draw/discard sequence of the hand (see HandAction). */
   actions: readonly HandAction[]
 }
 
@@ -60,6 +72,28 @@ export interface TableState {
   doraIndicator: TileId
   /** The mapped dora kind the indicator points at (doraKindOf over its kind). */
   dora: TileKind
+  /**
+   * Four discard ponds indexed by Seat, each in discard order — the order IS the
+   * pond's meaning (future defense reads depend on it). Fresh arrays per fold.
+   */
+  ponds: readonly [TileId[], TileId[], TileId[], TileId[]]
+  /**
+   * The seat whose action is expected next, advancing East→South→West→North per
+   * completed turn. Once the hand ends it stays at the last discarder.
+   */
+  turn: Seat
+  /**
+   * The tile the turn seat has drawn and not yet discarded — held apart from the
+   * 13-tile hand, null between turns. Every tile id lives in exactly one of
+   * hands / ponds / drawn / live / dead at all times.
+   */
+  drawn: TileId | null
+  /**
+   * 'playing' until the discard that follows the draw emptying the live wall lands;
+   * then 'ryuukyoku' (exhaustive draw) — i.e. an ended phase exactly when live is
+   * empty. A widenable literal union: agari tickets add winning endings.
+   */
+  phase: 'playing' | 'ryuukyoku'
 }
 
 /**
@@ -88,5 +122,9 @@ export function foldRecord(record: HandRecord): TableState {
     dead,
     doraIndicator,
     dora: doraKindOf(kindOf(doraIndicator)),
+    ponds: [[], [], [], []],
+    turn: 0,
+    drawn: null,
+    phase: 'playing',
   }
 }
