@@ -1,6 +1,15 @@
 <script lang="ts">
   import { foldRecord, legalActions, type HandAction, type TileId } from '../core'
-  import { forcedAction, passClaim, PLAYER, tapDiscard } from './drive'
+  import {
+    forcedAction,
+    passClaim,
+    PLAYER,
+    promptChoices,
+    tapClaim,
+    tapDiscard,
+    type ClaimChoice,
+  } from './drive'
+  import ClaimPrompt from './ClaimPrompt.svelte'
   import Table from './Table.svelte'
 
   // Arbitrary walking-skeleton seed (it matches the frozen golden vector in
@@ -14,6 +23,10 @@
   let actions = $state<HandAction[]>([])
   const table = $derived(foldRecord({ seed, actions }))
   const offered = $derived(legalActions(table))
+  // The player's claim prompt list — deduped for presentation, non-empty exactly
+  // when forcedAction waits on the player's claim window, so the prompt shows
+  // precisely while the loop pauses (one predicate family in drive.ts).
+  const prompt = $derived(promptChoices(offered, PLAYER))
 
   // Pacing is presentation: one forced action per tick keeps ponds and the wall
   // counter landing visibly, action by action, instead of a whole bot round at once.
@@ -24,17 +37,25 @@
     if (action !== null) actions.push(action)
   }
 
+  function claim(choice: ClaimChoice) {
+    const action = tapClaim(offered, PLAYER, choice)
+    if (action !== null) actions.push(action)
+  }
+
+  function pass() {
+    const action = passClaim(offered, PLAYER)
+    if (action !== null) actions.push(action)
+  }
+
   // The reactive fixed point that runs the table: each append re-folds and re-derives
   // `offered`, which re-runs this effect — draws (the player's included) and bot
   // tsumogiri land one per tick until forcedAction yields null, i.e. the player's
-  // discard choice or the empty offering at ryuukyoku. Cleanup drops the pending
-  // timer on re-run and unmount. $effect never runs in SSR, where the dealt fold
-  // renders statically.
+  // discard choice, his claim window (the prompt owns it: claim/pass taps resolve
+  // the wait), or the empty offering at ryuukyoku. Cleanup drops the pending timer
+  // on re-run and unmount. $effect never runs in SSR, where the dealt fold renders
+  // statically.
   $effect(() => {
-    // The `?? passClaim` arm is the interim auto-pass: forcedAction now waits when
-    // the player may claim, and until T-004-02-02's call/pass prompt replaces this
-    // line, the app declines for him — trajectories stay exactly the unclaimed ones.
-    const action = forcedAction(offered, PLAYER) ?? passClaim(offered, PLAYER)
+    const action = forcedAction(offered, PLAYER)
     if (action === null) return
     const timer = setTimeout(() => actions.push(action), BOT_DELAY_MS)
     return () => clearTimeout(timer)
@@ -44,6 +65,11 @@
 <main>
   <header>mahjong</header>
   <Table {table} ontap={tap} />
+  <!-- The claimable-window conjunct is a type guard, not policy: a claim offer
+       implies an open window; visibility is promptChoices alone. -->
+  {#if prompt.length > 0 && table.claimable !== null}
+    <ClaimPrompt claimed={table.claimable.tile} choices={prompt} onclaim={claim} onpass={pass} />
+  {/if}
 </main>
 
 <style>

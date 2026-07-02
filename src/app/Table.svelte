@@ -18,6 +18,15 @@
     [...table.hands[0]].sort((a, b) => kindIndexOf(kindOf(a)) - kindIndexOf(kindOf(b))),
   )
 
+  // Every claimed-away discard, straight off the melds: core keeps a claimed tile
+  // COUNTED in the discarder's pond (the complete discard history — furiten and
+  // defense reads), and each claiming meld's (from, claimed) is its mark there.
+  // Physical ids are unique, so one Set covers all four ponds; ankan claims nothing
+  // and contributes nothing.
+  const claimedAway = $derived(
+    new Set(table.melds.flat().flatMap((meld) => ('claimed' in meld ? [meld.claimed] : []))),
+  )
+
   // Riichi seating is counterclockwise with the player (East) at the bottom:
   // South right, West top, North left. Grid areas are named by wind, not screen
   // edge — the mapping lives once in grid-template-areas below. SEATS is in Seat
@@ -42,9 +51,35 @@
       <!-- Discard order straight off the fold — the order IS the pond's meaning. -->
       <ul class="pond" aria-label={seat.pond}>
         {#each table.ponds[i] as id (id)}
-          <li><Tile {id} /></li>
+          <!-- A claimed-away tile stays in the pond (the fold counts it here — the
+               discard history is complete) and wears the mark instead of vanishing. -->
+          {#if claimedAway.has(id)}
+            <li class="claimed" aria-label="claimed {kindOf(id)}"><Tile {id} /></li>
+          {:else}
+            <li><Tile {id} /></li>
+          {/if}
         {/each}
       </ul>
+      {#if table.melds[i].length > 0}
+        <!-- Exposed melds in claim order, each: the caller's own tiles, then the
+             claimed discard turned sideways — the parlor mark naming whose it was.
+             An ankan exposes only its own four. -->
+        <ul class="melds" aria-label="{seat.area} melds">
+          {#each table.melds[i] as meld}
+            <li class="meld">
+              {#each meld.own as id (id)}<Tile {id} />{/each}
+              {#if 'claimed' in meld}
+                <span
+                  class="claimed-tile"
+                  aria-label="claimed {kindOf(meld.claimed)} from {SEATS[meld.from].area}"
+                >
+                  <Tile id={meld.claimed} />
+                </span>
+              {/if}
+            </li>
+          {/each}
+        </ul>
+      {/if}
       {#if seat.you}
         <ul class="hand" aria-label="your hand">
           {#each hand as id (id)}
@@ -159,6 +194,36 @@
   .pond {
     min-height: 1.6em;
     max-width: 9.5rem;
+  }
+
+  /* A pond tile claimed away: still counted, visibly taken. */
+  .pond .claimed {
+    opacity: 0.45;
+    transform: rotate(8deg);
+  }
+
+  .melds {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.5rem;
+    margin: 0.35rem 0 0;
+    padding: 0;
+    list-style: none;
+    text-transform: none;
+  }
+
+  .meld {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.1rem;
+  }
+
+  /* The claimed tile sits sideways in the meld — the parlor convention. */
+  .claimed-tile {
+    display: inline-flex;
+    transform: rotate(90deg);
+    margin: 0 0.25em;
   }
 
   .drawn {

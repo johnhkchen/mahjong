@@ -7,8 +7,10 @@
 
 import { render } from 'svelte/server'
 import { describe, expect, it } from 'vitest'
-import { foldRecord, kindOf, type HandAction, type TileId } from '../core'
+import { foldRecord, kindOf, legalActions, type HandAction, type TileId } from '../core'
+import { PLAYER, promptChoices } from './drive'
 import App from './App.svelte'
+import ClaimPrompt from './ClaimPrompt.svelte'
 import Table from './Table.svelte'
 
 // The walking-skeleton boot seed in App.svelte. If the app's seed changes, this is the
@@ -133,6 +135,112 @@ describe('mid-hand table view (SSR)', () => {
   it('counts down the live wall', () => {
     expect(midHand.live.length).toBe(61) // fixture sanity: 70 − 9 draws
     expect(body).toContain(`${midHand.live.length} tiles left`)
+  })
+})
+
+// The seed-15 mixed claim window (the frozen drive.test.ts anchor): after eight
+// tsumogiri turns North discards 45 (3p); East holds a pon [44,47] and two
+// shape-distinct chis [41,51] (2p+4p) and [51,55] (4p+5p). The prompt's props are
+// DERIVED here — promptChoices over the live offering — never typed in.
+describe('claim prompt view (SSR)', () => {
+  const dealt15 = foldRecord({ seed: 15, actions: [] })
+  const window15 = foldRecord({ seed: 15, actions: tsumogiriTurns(dealt15.live, 8) })
+  const choices = promptChoices(legalActions(window15), PLAYER)
+  const { body } = render(ClaimPrompt, {
+    props: { claimed: window15.claimable!.tile, choices },
+  })
+
+  it('exposes the call-or-pass group landmark', () => {
+    expect(body).toContain('aria-label="call or pass"')
+  })
+
+  it('renders the claimed tile and every choice\'s hand tiles, in offered order', () => {
+    // Header 3p, then pon 3p+3p, chi 2p+4p, chi 4p+5p — document order is the
+    // frozen offered order (pon before chis, shapes ascending).
+    expect(regionTokens(body, 'call or pass', '</aside>')).toEqual([
+      '3p',
+      '3p',
+      '3p',
+      '2p',
+      '4p',
+      '4p',
+      '5p',
+    ])
+  })
+
+  it('labels one call button per deduped choice — chi variants named by their shapes', () => {
+    expect(choices).toHaveLength(3) // fixture sanity: the anchor's pon + two chis
+    expect(body).toContain('aria-label="pon 3p with 3p 3p"')
+    expect(body).toContain('aria-label="chi 3p with 2p 4p"')
+    expect(body).toContain('aria-label="chi 3p with 4p 5p"')
+  })
+
+  it('renders the pass button', () => {
+    expect(body).toContain('aria-label="pass"')
+  })
+
+  it('displays a daiminkan choice as a kan button', () => {
+    // The seed-212 anchor: East's three 8s copies — three pon pairs dedupe to one
+    // button and the kan keeps its own. Vocabulary: the button says "kan"; the
+    // payload keeps the record's discriminant.
+    const dealt212 = foldRecord({ seed: 212, actions: [] })
+    const window212 = foldRecord({ seed: 212, actions: tsumogiriTurns(dealt212.live, 6) })
+    const kanChoices = promptChoices(legalActions(window212), PLAYER)
+    const kan = render(ClaimPrompt, {
+      props: { claimed: window212.claimable!.tile, choices: kanChoices },
+    }).body
+    expect(body).not.toContain('aria-label="kan') // the mixed window offers no kan
+    expect(kan).toContain('aria-label="pon 8s with 8s 8s"')
+    expect(kan).toContain('aria-label="kan 8s with 8s 8s 8s"')
+  })
+
+  it('shows no prompt at the freshly dealt boot — nothing is claimable', () => {
+    expect(render(App).body).not.toContain('call or pass')
+  })
+})
+
+// The seed-3 race window driven one step further (the drive.test.ts claim walk's
+// exact actions): four tsumogiri turns, then East chis North's 42 (2p) with
+// [37, 47] (1p+3p) — the fold exposes the meld, keeps 42 counted in North's pond,
+// and hands East the claim discard.
+describe('meld display (SSR)', () => {
+  const dealt3 = foldRecord({ seed: 3, actions: [] })
+  const claimed = foldRecord({
+    seed: 3,
+    actions: [
+      ...tsumogiriTurns(dealt3.live, 4),
+      { type: 'chi', seat: 0, tile: 42, uses: [37, 47] },
+    ],
+  })
+  const { body } = render(Table, { props: { table: claimed } })
+
+  it('exposes the meld beside the hand: own tiles then the claimed tile, marked with its source', () => {
+    expect(claimed.melds[0]).toEqual([{ type: 'chi', claimed: 42, from: 3, own: [37, 47] }])
+    expect(regionTokens(body, 'east melds')).toEqual(['1p', '3p', '2p'])
+    expect(body).toContain('aria-label="claimed 2p from north"')
+  })
+
+  it('keeps the claimed tile counted in the discarder\'s pond, wearing the claimed mark', () => {
+    // The pond renders the COMPLETE discard history — the claimed tile is marked,
+    // never removed (core's furiten/defense posture made visible).
+    expect(claimed.ponds[3].map(kindOf)).toContain('2p')
+    expect(regionTokens(body, 'north pond')).toEqual(claimed.ponds[3].map(kindOf))
+    expect(body).toContain('aria-label="claimed 2p"')
+  })
+
+  it('renders no melds list for seats without melds', () => {
+    expect(body).not.toContain('aria-label="south melds"')
+    expect(body.split('melds"').length - 1).toBe(1) // exactly one melds region: East's
+  })
+
+  it('hands the turn to the caller with the claim discard owed from an 11-tile hand', () => {
+    expect(claimed.turn).toBe(0)
+    expect(claimed.mustDiscard).toBe(true)
+    const start = body.indexOf('aria-label="your hand"')
+    const hand = body.slice(start, body.indexOf('</ul>', start))
+    expect(hand.split('aria-label="discard ').length - 1).toBe(11)
+    // The turn marker sits on East — play resumes from the caller.
+    expect(body.indexOf('aria-current="true"')).toBeLessThan(body.indexOf('South'))
   })
 })
 
