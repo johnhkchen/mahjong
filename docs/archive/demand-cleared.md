@@ -26,3 +26,10 @@ to keep it lean. One line per epic: what it delivered. Full cards live in
   every prefix, fold determinism, guaranteed termination, five-operator illegal-mutation matrix
   (102 tests green). View: human plays East tap-to-discard, other seats paced tsumogiri, all off
   the fold. 5/5 tickets done.
+- **E-004 legal-calls-chi-pon-kan** ("Legal calls (chi/pon/kan)", Tier 1) — interruption
+  semantics over the fold: chi (kamicha-only) / pon claims with meld exposure, pond marks, and
+  turn jump; all three kan forms with rinshan draw, immediate kan-dora flip (documented core
+  convention), and live-wall shortening; `legalActions` claim/kan offers under a two-sided
+  agreement suite; six-zone conservation + kan-aware termination + illegal-claim mutation matrix
+  (214 tests green). View: call/pass prompt with chi-variant choice, melds beside hands. Rinshan
+  draws and kan-dora flips are derived, never logged. 6/6 tickets done.

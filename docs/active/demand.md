@@ -15,8 +15,6 @@ and off this board.
 
 ## Tier 1 — A finishable hand (P1: without this there is nothing)
 
-- **Agari + win detection** — recognize a complete hand (four sets + a pair, plus the special
-  hands) on tsumo and ron; enforce that a win needs at least one yaku. _(advances P1)_
 - **One competent bot table** — three non-cheating opponents that see only a player's view, draw
   from the same wall, and play a real hand start to finish. _(advances P1)_
 
