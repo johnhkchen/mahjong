@@ -7,7 +7,7 @@
     "dev": "vite",
     "test": "vitest run",
     "check": "svelte-check --tsconfig ./tsconfig.json && tsc -p tsconfig.node.json --noEmit",
-    "build": "vite build"
+    "build": "vite build && node scripts/verify-single-file.mjs"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "7.1.2",
