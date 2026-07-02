@@ -14,11 +14,13 @@ import { describe, expect, it } from 'vitest'
 import {
   DEAL_SIZE,
   LIVE_WALL_SIZE,
+  SEAT_COUNT,
   TILE_COUNT,
   foldRecord,
   legalActions,
   type HandAction,
   type HandRecord,
+  type Seat,
   type TableState,
 } from './index'
 
@@ -150,6 +152,110 @@ describe('fold determinism over random play', () => {
         expect(second.ponds).not.toBe(first.ponds)
         expect(second.live).not.toBe(first.live)
       }),
+    )
+  })
+})
+
+/** Membership key for offered-set checks (mirrored from legal.test.ts). */
+function keyOf(action: HandAction): string {
+  return action.type === 'draw' ? `draw:${action.seat}` : `discard:${action.seat}:${action.tile}`
+}
+
+/**
+ * The mutation assertion: splice `mutant` between a legally-reachable prefix and the
+ * rest of the record, then require BOTH halves of the contract to reject it — absent
+ * from the offered set at that point, and thrown by the fold (before the suffix is
+ * ever reached). Callers guarantee the mutant is outside legality; the only operator
+ * that can accidentally stay legal (tile retarget) fc.pre-filters first.
+ */
+function assertMutantThrows(
+  seed: number,
+  prefix: readonly HandAction[],
+  mutant: HandAction,
+  suffix: readonly HandAction[],
+): void {
+  const offered = new Set(legalActions(foldRecord({ seed, actions: prefix })).map(keyOf))
+  expect(offered.has(keyOf(mutant))).toBe(false)
+  expect(() => foldRecord({ seed, actions: [...prefix, mutant, ...suffix] })).toThrow(RangeError)
+}
+
+describe('mutated sequences throw', () => {
+  // Each operator moves ONE action of a random-legal record one rule outside
+  // legality, spanning every guard in the step: wrong seat, out-of-sequence
+  // draw/discard, unheld tile, action past the end.
+
+  it('seat bump: any action reassigned to another seat throws (property)', () => {
+    fc.assert(
+      fc.property(gameArb, fc.nat(), fc.integer({ min: 1, max: 3 }), ({ seed, actions }, at, bump) => {
+        fc.pre(actions.length > 0)
+        const i = at % actions.length
+        const action = actions[i]
+        const seat = ((action.seat + bump) % SEAT_COUNT) as Seat
+        const mutant: HandAction =
+          action.type === 'draw' ? { type: 'draw', seat } : { type: 'discard', seat, tile: action.tile }
+        assertMutantThrows(seed, actions.slice(0, i), mutant, actions.slice(i + 1))
+      }),
+    )
+  })
+
+  it('type flip: a draw turned into a discard, or a discard into a draw, throws (property)', () => {
+    fc.assert(
+      fc.property(gameArb, fc.nat(), fc.nat(TILE_COUNT - 1), ({ seed, actions }, at, tile) => {
+        fc.pre(actions.length > 0)
+        const i = at % actions.length
+        const action = actions[i]
+        // A discard at a pre-draw point (any tile, even one genuinely held) and a
+        // draw at a post-draw point are both out of sequence.
+        const mutant: HandAction =
+          action.type === 'draw'
+            ? { type: 'discard', seat: action.seat, tile }
+            : { type: 'draw', seat: action.seat }
+        assertMutantThrows(seed, actions.slice(0, i), mutant, actions.slice(i + 1))
+      }),
+    )
+  })
+
+  it('tile retarget: a discard changed to a tile neither held nor just drawn throws (property)', () => {
+    fc.assert(
+      fc.property(gameArb, fc.nat(), fc.nat(TILE_COUNT - 1), ({ seed, actions }, at, tile) => {
+        const discards = actions.flatMap((a, i) => (a.type === 'discard' ? [[a, i] as const] : []))
+        fc.pre(discards.length > 0)
+        const [action, i] = discards[at % discards.length]
+        const mutant: HandAction = { type: 'discard', seat: action.seat, tile }
+        // ~14 of 136 retargets land on another legally discardable tile — still a
+        // legal record, so not a counterexample candidate; discard those runs.
+        const offered = legalActions(foldRecord({ seed, actions: actions.slice(0, i) }))
+        fc.pre(!offered.some((a) => keyOf(a) === keyOf(mutant)))
+        assertMutantThrows(seed, actions.slice(0, i), mutant, actions.slice(i + 1))
+      }),
+    )
+  })
+
+  it('duplicate: replaying an action immediately after itself throws (property)', () => {
+    fc.assert(
+      fc.property(gameArb, fc.nat(), ({ seed, actions }, at) => {
+        fc.pre(actions.length > 0)
+        const i = at % actions.length
+        // A doubled draw is a second draw in a row; a doubled discard hits the next
+        // seat's turn (or the ended hand) — outside legality either way.
+        assertMutantThrows(seed, actions.slice(0, i + 1), actions[i], actions.slice(i + 1))
+      }),
+    )
+  })
+
+  it('append after ryuukyoku: any action past the end of a full game throws (property)', () => {
+    fc.assert(
+      fc.property(
+        fullGameArb,
+        fc.nat(SEAT_COUNT - 1),
+        fc.boolean(),
+        fc.nat(TILE_COUNT - 1),
+        (record, seatRaw, isDraw, tile) => {
+          const seat = seatRaw as Seat
+          const mutant: HandAction = isDraw ? { type: 'draw', seat } : { type: 'discard', seat, tile }
+          assertMutantThrows(record.seed, record.actions, mutant, [])
+        },
+      ),
     )
   })
 })
