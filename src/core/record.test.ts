@@ -96,13 +96,6 @@ describe('hand-record fold entrypoint', () => {
     )
   })
 
-  it('rejects a record whose action log is non-empty — no action vocabulary exists yet', () => {
-    // The cast deliberately defeats HandAction = never to simulate a corrupt (or
-    // ahead-of-this-engine) record arriving from untyped JS or storage.
-    const corrupt = { seed: 1, actions: [0] as unknown as HandRecord['actions'] }
-    expect(() => foldRecord(corrupt)).toThrow(RangeError)
-  })
-
   it('reproduces the frozen fold for seed 1 — a mismatch means the record contract moved and every stored hand replays wrong', () => {
     // Literals reused verbatim from the already-frozen goldens (hands + live prefix:
     // deal.test.ts / T-002-01-03 progress.md; dead wall + indicator: wall.test.ts /

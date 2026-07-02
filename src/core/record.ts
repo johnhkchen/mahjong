@@ -97,26 +97,107 @@ export interface TableState {
 }
 
 /**
- * The fold entrypoint: record in, table state out. Folding an EMPTY action log yields
- * the freshly dealt table — the deal is the seed's own derivation, not an action.
- * Pure: no RNG beyond the seed's wall build, the record is never mutated, all output
- * arrays are fresh. Same record → same folded state, forever: this composes only the
- * frozen conventions (rng stream, wall orientation, deal map, dora position).
+ * The per-action step: advance the fold-local state by one logged action, mutating it
+ * in place (every array in `state` is fresh to this fold, so the mutation is invisible
+ * outside foldRecord). The turn cycle it enforces:
  *
- * The non-empty-log guard IS the step function for an empty action vocabulary: an
- * action the engine cannot interpret must never fold silently into a wrong state
- * (the nextInt precedent — corruption fails loudly). Action tickets replace it with
- * the real per-action step.
+ * - drawn === null → the turn seat must draw; the drawn tile is live[0], by the
+ *   frozen wall order — the action itself records no tile.
+ * - drawn !== null → the turn seat must discard: the drawn tile itself (tsumogiri,
+ *   hand untouched) or a hand tile (tedashi — the hand tile leaves, the drawn tile is
+ *   APPENDED to the hand, preserving "hands are in draw order, never sorted").
+ * - After a discard, if the live wall is empty the hand ends in ryuukyoku (so the
+ *   fold is in an ended phase exactly when live is empty); otherwise the turn
+ *   advances E→S→W→N.
+ *
+ * Anything else — an action after the end, an unknown type from untyped JS, a wrong
+ * seat, a draw out of sequence, a discard of a tile not held — is log corruption and
+ * throws RangeError with the action's index (the nextInt precedent: an action the
+ * engine cannot interpret must never fold silently into a wrong state).
  */
-export function foldRecord(record: HandRecord): TableState {
-  if (record.actions.length > 0) {
+function applyAction(state: TableState, action: HandAction, index: number): void {
+  if (state.phase !== 'playing') {
     throw new RangeError(
-      `foldRecord cannot interpret actions — the action vocabulary is empty in this engine slice, got ${record.actions.length}`,
+      `action ${index}: the hand already ended in ${state.phase} — no further action can fold`,
     )
   }
+  switch (action.type) {
+    case 'draw': {
+      if (action.seat !== state.turn) {
+        throw new RangeError(
+          `action ${index}: draw by seat ${action.seat}, but it is seat ${state.turn}'s turn`,
+        )
+      }
+      if (state.drawn !== null) {
+        throw new RangeError(
+          `action ${index}: draw out of sequence — seat ${state.turn} already holds drawn tile ${state.drawn}`,
+        )
+      }
+      if (state.live.length === 0) {
+        // Unreachable through a legal fold (the phase ends with the last discard),
+        // kept as a loud guard against a corrupt or hand-built state.
+        throw new RangeError(`action ${index}: draw from an empty live wall`)
+      }
+      state.drawn = state.live.shift()!
+      return
+    }
+    case 'discard': {
+      if (action.seat !== state.turn) {
+        throw new RangeError(
+          `action ${index}: discard by seat ${action.seat}, but it is seat ${state.turn}'s turn`,
+        )
+      }
+      if (state.drawn === null) {
+        throw new RangeError(
+          `action ${index}: discard of tile ${action.tile} before seat ${state.turn} drew`,
+        )
+      }
+      if (action.tile === state.drawn) {
+        state.ponds[state.turn].push(action.tile)
+      } else {
+        const hand = state.hands[state.turn]
+        const at = hand.indexOf(action.tile)
+        if (at === -1) {
+          throw new RangeError(
+            `action ${index}: discard of tile ${action.tile}, which seat ${state.turn} neither holds nor just drew`,
+          )
+        }
+        hand.splice(at, 1)
+        hand.push(state.drawn)
+        state.ponds[state.turn].push(action.tile)
+      }
+      state.drawn = null
+      if (state.live.length === 0) {
+        state.phase = 'ryuukyoku'
+      } else {
+        state.turn = ((state.turn + 1) % SEAT_COUNT) as Seat
+      }
+      return
+    }
+    default: {
+      // `action` is `never` here for well-typed logs; untyped JS (storage, a corrupt
+      // log) can still reach it, and must fail loudly rather than fold silently.
+      throw new RangeError(
+        `action ${index}: unknown action type ${JSON.stringify((action as { type?: unknown }).type)}`,
+      )
+    }
+  }
+}
+
+/**
+ * The fold entrypoint: record in, table state out. Folding an EMPTY action log yields
+ * the freshly dealt table — the deal is the seed's own derivation, not an action;
+ * each logged action then advances the state through applyAction's turn cycle.
+ * Pure: no RNG beyond the seed's wall build, the record is never mutated, all output
+ * arrays are fresh. Same record → same folded state, forever: this composes only the
+ * frozen conventions (rng stream, wall orientation, deal map, dora position, action
+ * encoding). Replay, undo, and review are folds over log prefixes of this function.
+ * An illegal or uninterpretable action throws RangeError naming its log index.
+ */
+export function foldRecord(record: HandRecord): TableState {
   const { live, dead, doraIndicator } = partitionWall(buildWall(record.seed))
   const deal = dealHands(live)
-  return {
+  const state: TableState = {
     hands: deal.hands,
     live: deal.live,
     dead,
@@ -127,4 +208,6 @@ export function foldRecord(record: HandRecord): TableState {
     drawn: null,
     phase: 'playing',
   }
+  record.actions.forEach((action, index) => applyAction(state, action, index))
+  return state
 }
