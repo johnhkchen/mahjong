@@ -1,0 +1,18 @@
+{
+  "extends": "@tsconfig/svelte/tsconfig.json",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    // svelte-check resolves `.svelte` imports from `.ts` files only with allowJs on
+    // (verified empirically against svelte-check 4.7.1); checkJs matches the official
+    // template and typechecks any JS that ever appears in .svelte files.
+    "allowJs": true,
+    "checkJs": true
+  },
+  "include": ["src/**/*.ts", "src/**/*.svelte"]
+}
