@@ -8,3 +8,5 @@ coverage/
 .flox/cache/
 .flox/log/
 .DS_Store
+board.svg
+.lisa-layout.kdl
