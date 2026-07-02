@@ -15,8 +15,6 @@ and off this board.
 
 ## Tier 1 — A finishable hand (P1: without this there is nothing)
 
-- **Wall + deal + dead wall** — build the full 136-tile wall from a seed, deal 13-tile hands to
-  four seats, break the dead wall and flip the dora indicator. _(advances P1)_
 - **Draw / discard turn loop** — the East-to-North turn cycle: draw from the wall, sort, discard
   to the pond, advance; wall-exhaustion (ryuukyoku) end. _(advances P1)_
 - **Legal calls (chi/pon/kan)** — call detection and interruption ordering, exposed melds, kan
