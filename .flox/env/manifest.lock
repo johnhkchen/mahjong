@@ -1,0 +1,272 @@
+{
+  "lockfile-version": 1,
+  "manifest": {
+    "version": 1,
+    "install": {
+      "just": {
+        "pkg-path": "just",
+        "version": "1.54.0"
+      },
+      "nodejs": {
+        "pkg-path": "nodejs",
+        "version": "24.16.0"
+      }
+    },
+    "hook": {},
+    "profile": {},
+    "options": {
+      "systems": [
+        "aarch64-darwin",
+        "aarch64-linux",
+        "x86_64-darwin",
+        "x86_64-linux"
+      ]
+    }
+  },
+  "packages": [
+    {
+      "attr_path": "just",
+      "broken": false,
+      "derivation": "/nix/store/m35qbv0as3a76b2ndlkvas1wn0mpwlb8-just-1.54.0.drv",
+      "description": "Handy way to save and run project-specific commands",
+      "install_id": "just",
+      "license": "CC0-1.0",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=b5aa0fbd538984f6e3d201be0005b4463d8b09f8",
+      "name": "just-1.54.0",
+      "pname": "just",
+      "rev": "b5aa0fbd538984f6e3d201be0005b4463d8b09f8",
+      "rev_count": 1024265,
+      "rev_date": "2026-06-29T09:01:53Z",
+      "scrape_date": "2026-07-01T03:13:04.786651Z",
+      "stabilities": [
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "1.54.0",
+      "outputs_to_install": [
+        "man",
+        "out"
+      ],
+      "outputs": {
+        "doc": "/nix/store/viaamsidc2a6i9hsk7sslcin5ccisiba-just-1.54.0-doc",
+        "man": "/nix/store/y0476rym2901gafsxcr29w07778qdbf5-just-1.54.0-man",
+        "out": "/nix/store/gdbxf7azmrwyr00k313r888rw3gr6mfd-just-1.54.0"
+      },
+      "system": "aarch64-darwin",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "just",
+      "broken": false,
+      "derivation": "/nix/store/yasqc561g5h8c4xyy94rs0xciv5iwb8a-just-1.54.0.drv",
+      "description": "Handy way to save and run project-specific commands",
+      "install_id": "just",
+      "license": "CC0-1.0",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=b5aa0fbd538984f6e3d201be0005b4463d8b09f8",
+      "name": "just-1.54.0",
+      "pname": "just",
+      "rev": "b5aa0fbd538984f6e3d201be0005b4463d8b09f8",
+      "rev_count": 1024265,
+      "rev_date": "2026-06-29T09:01:53Z",
+      "scrape_date": "2026-07-01T03:41:43.119343Z",
+      "stabilities": [
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "1.54.0",
+      "outputs_to_install": [
+        "man",
+        "out"
+      ],
+      "outputs": {
+        "doc": "/nix/store/vakwrh7cdzs3c7rklgbz3r0ivdd7v6dq-just-1.54.0-doc",
+        "man": "/nix/store/fsx5gcfax6fhhyb1cxq2a6r6qn7604wd-just-1.54.0-man",
+        "out": "/nix/store/gbw1366v4d2hp3lffvz3k4bvig8h79vp-just-1.54.0"
+      },
+      "system": "aarch64-linux",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "just",
+      "broken": false,
+      "derivation": "/nix/store/0rvzw2yc54p352blm7qv9x00kzfwr88f-just-1.54.0.drv",
+      "description": "Handy way to save and run project-specific commands",
+      "install_id": "just",
+      "license": "CC0-1.0",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=b5aa0fbd538984f6e3d201be0005b4463d8b09f8",
+      "name": "just-1.54.0",
+      "pname": "just",
+      "rev": "b5aa0fbd538984f6e3d201be0005b4463d8b09f8",
+      "rev_count": 1024265,
+      "rev_date": "2026-06-29T09:01:53Z",
+      "scrape_date": "2026-07-01T04:09:06.135870Z",
+      "stabilities": [
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "1.54.0",
+      "outputs_to_install": [
+        "man",
+        "out"
+      ],
+      "outputs": {
+        "doc": "/nix/store/br88ib3kmmiydm96k4c2m4nnmrgq3zcj-just-1.54.0-doc",
+        "man": "/nix/store/x78s7737cb11q36isfcd11h24jff2h2p-just-1.54.0-man",
+        "out": "/nix/store/qlms9i3zdsqpfwmdslpkl2xdcs6k76ba-just-1.54.0"
+      },
+      "system": "x86_64-darwin",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "just",
+      "broken": false,
+      "derivation": "/nix/store/y5sv9zj3wv4inayrkwnalrlxsn51jx1r-just-1.54.0.drv",
+      "description": "Handy way to save and run project-specific commands",
+      "install_id": "just",
+      "license": "CC0-1.0",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=b5aa0fbd538984f6e3d201be0005b4463d8b09f8",
+      "name": "just-1.54.0",
+      "pname": "just",
+      "rev": "b5aa0fbd538984f6e3d201be0005b4463d8b09f8",
+      "rev_count": 1024265,
+      "rev_date": "2026-06-29T09:01:53Z",
+      "scrape_date": "2026-07-01T04:39:44.183175Z",
+      "stabilities": [
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "1.54.0",
+      "outputs_to_install": [
+        "man",
+        "out"
+      ],
+      "outputs": {
+        "doc": "/nix/store/ghqfn9gcdravrniw7iacpb46g00wf1fk-just-1.54.0-doc",
+        "man": "/nix/store/8y75gr1mhidc6b7x56kalk5ydqni9bf4-just-1.54.0-man",
+        "out": "/nix/store/jkvmgfmklm7q60sd4jl56h0315kbgi27-just-1.54.0"
+      },
+      "system": "x86_64-linux",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "nodejs",
+      "broken": false,
+      "derivation": "/nix/store/1a0cn85p1mwixhwy16db7v2652pz7l8g-nodejs-24.16.0.drv",
+      "description": "Event-driven I/O framework for the V8 JavaScript engine",
+      "install_id": "nodejs",
+      "license": "MIT",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=b5aa0fbd538984f6e3d201be0005b4463d8b09f8",
+      "name": "nodejs-24.16.0",
+      "pname": "nodejs",
+      "rev": "b5aa0fbd538984f6e3d201be0005b4463d8b09f8",
+      "rev_count": 1024265,
+      "rev_date": "2026-06-29T09:01:53Z",
+      "scrape_date": "2026-07-01T03:13:12.434109Z",
+      "stabilities": [
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "24.16.0",
+      "outputs_to_install": [
+        "out"
+      ],
+      "outputs": {
+        "out": "/nix/store/1zm1xb652wk1kscxbcvbryq8y45b0gy5-nodejs-24.16.0"
+      },
+      "system": "aarch64-darwin",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "nodejs",
+      "broken": false,
+      "derivation": "/nix/store/aay2n9r5ljwfvlva807p9f0p1vpwg7mb-nodejs-24.16.0.drv",
+      "description": "Event-driven I/O framework for the V8 JavaScript engine",
+      "install_id": "nodejs",
+      "license": "MIT",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=b5aa0fbd538984f6e3d201be0005b4463d8b09f8",
+      "name": "nodejs-24.16.0",
+      "pname": "nodejs",
+      "rev": "b5aa0fbd538984f6e3d201be0005b4463d8b09f8",
+      "rev_count": 1024265,
+      "rev_date": "2026-06-29T09:01:53Z",
+      "scrape_date": "2026-07-01T03:41:58.895602Z",
+      "stabilities": [
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "24.16.0",
+      "outputs_to_install": [
+        "out"
+      ],
+      "outputs": {
+        "out": "/nix/store/60vys190zxlx4k1jz0kyvk4vydzr7qml-nodejs-24.16.0"
+      },
+      "system": "aarch64-linux",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "nodejs",
+      "broken": false,
+      "derivation": "/nix/store/yc1bpd21mkkawwxkq2zskmkqjmzwgv54-nodejs-24.16.0.drv",
+      "description": "Event-driven I/O framework for the V8 JavaScript engine",
+      "install_id": "nodejs",
+      "license": "MIT",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=b5aa0fbd538984f6e3d201be0005b4463d8b09f8",
+      "name": "nodejs-24.16.0",
+      "pname": "nodejs",
+      "rev": "b5aa0fbd538984f6e3d201be0005b4463d8b09f8",
+      "rev_count": 1024265,
+      "rev_date": "2026-06-29T09:01:53Z",
+      "scrape_date": "2026-07-01T04:09:14.252199Z",
+      "stabilities": [
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "24.16.0",
+      "outputs_to_install": [
+        "out"
+      ],
+      "outputs": {
+        "out": "/nix/store/v04l0kjhdvbzkzrnw6ryf43dp8v0qapv-nodejs-24.16.0"
+      },
+      "system": "x86_64-darwin",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "nodejs",
+      "broken": false,
+      "derivation": "/nix/store/k9jn43g1p70zs7l9vgxh57aarg2s2jkv-nodejs-24.16.0.drv",
+      "description": "Event-driven I/O framework for the V8 JavaScript engine",
+      "install_id": "nodejs",
+      "license": "MIT",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=b5aa0fbd538984f6e3d201be0005b4463d8b09f8",
+      "name": "nodejs-24.16.0",
+      "pname": "nodejs",
+      "rev": "b5aa0fbd538984f6e3d201be0005b4463d8b09f8",
+      "rev_count": 1024265,
+      "rev_date": "2026-06-29T09:01:53Z",
+      "scrape_date": "2026-07-01T04:40:03.064533Z",
+      "stabilities": [
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "24.16.0",
+      "outputs_to_install": [
+        "out"
+      ],
+      "outputs": {
+        "out": "/nix/store/zvj0hl7rhh0ccr5vkcg3ijs3xm3sgyac-nodejs-24.16.0"
+      },
+      "system": "x86_64-linux",
+      "group": "toplevel",
+      "priority": 5
+    }
+  ]
+}
