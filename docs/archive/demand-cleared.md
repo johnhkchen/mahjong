@@ -19,3 +19,10 @@ to keep it lean. One line per epic: what it delivered. Full cards live in
   the turn loop widens it) folded by pure `foldRecord` → `TableState`. Deal-conservation, dora,
   seed- and fold-determinism property tests (53 total green); app renders the dealt hand + dora
   via the fold. 5/5 tickets done.
+- **E-003 draw-discard-turn-loop** ("Draw / discard turn loop", Tier 1) — the hand runs:
+  `HandAction` widened to draw/discard with a per-action step, E→S→W→N cycle, per-seat ordered
+  ponds, ryuukyoku at wall exhaustion; `legalActions` exported with an agreement suite (every
+  offered action folds; all non-offered candidates throw); fast-check dynamics — conservation at
+  every prefix, fold determinism, guaranteed termination, five-operator illegal-mutation matrix
+  (102 tests green). View: human plays East tap-to-discard, other seats paced tsumogiri, all off
+  the fold. 5/5 tickets done.

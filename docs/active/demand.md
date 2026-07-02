@@ -15,8 +15,6 @@ and off this board.
 
 ## Tier 1 — A finishable hand (P1: without this there is nothing)
 
-- **Legal calls (chi/pon/kan)** — call detection and interruption ordering, exposed melds, kan
-  from the dead wall with a fresh dora, and the resulting turn skips. _(advances P1)_
 - **Agari + win detection** — recognize a complete hand (four sets + a pair, plus the special
   hands) on tsumo and ron; enforce that a win needs at least one yaku. _(advances P1)_
 - **One competent bot table** — three non-cheating opponents that see only a player's view, draw
