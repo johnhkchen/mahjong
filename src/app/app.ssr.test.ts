@@ -67,6 +67,12 @@ describe('dealt-table view (SSR)', () => {
     expect(body).toContain('aria-label="dora indicator"')
   })
 
+  it('renders every hand tile as a labeled discard button — the tap surface', () => {
+    const start = body.indexOf('aria-label="your hand"')
+    const hand = body.slice(start, body.indexOf('</ul>', start))
+    expect(hand.split('aria-label="discard ').length - 1).toBe(13)
+  })
+
   it('replaces the wall-count placeholder with the live-wall remaining count', () => {
     expect(body).toContain(`${table.live.length} tiles left`)
     expect(body).not.toContain('tiles in the wall')
@@ -116,6 +122,12 @@ describe('mid-hand table view (SSR)', () => {
     expect(midHand.drawn).not.toBeNull()
     expect(regionTokens(body, 'drawn tile', '</span>')).toEqual([kindOf(midHand.drawn!)])
     expect(regionTokens(body, 'your hand')).toHaveLength(13)
+  })
+
+  it('renders the drawn tile as a labeled discard button — tsumogiri is a tap too', () => {
+    const start = body.indexOf('aria-label="drawn tile"')
+    const drawn = body.slice(start, body.indexOf('</button>', start))
+    expect(drawn).toContain(`aria-label="discard ${kindOf(midHand.drawn!)}"`)
   })
 
   it('counts down the live wall', () => {

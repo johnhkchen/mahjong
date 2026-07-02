@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { kindIndexOf, kindOf, type TableState } from '../core'
+  import { kindIndexOf, kindOf, type TableState, type TileId } from '../core'
   import Tile from './Tile.svelte'
 
   // Stateless presentational table: the folded TableState in via one prop, markup out.
@@ -7,8 +7,10 @@
   // wall count) is a field read off the fold; the only conditionals are presentation
   // gates on those reads. The one computation is the display sort of the player's
   // hand, which core explicitly assigns to the view ("never sorted; sorting is
-  // presentation", deal.ts/TableState).
-  let { table }: { table: TableState } = $props()
+  // presentation", deal.ts/TableState). `ontap` is input wiring OUT, not a fact in:
+  // taps report the tile, and legality lives entirely with the owner of the record —
+  // buttons render whenever their tiles do, an illegal tap is the caller's no-op.
+  let { table, ontap }: { table: TableState; ontap?: (tile: TileId) => void } = $props()
 
   // Seat 0 (East) is the player. Stable copy-sort into canonical kind order via the
   // public accessors — draw order is the record's truth and stays untouched upstream.
@@ -46,13 +48,21 @@
       {#if seat.you}
         <ul class="hand" aria-label="your hand">
           {#each hand as id (id)}
-            <li><Tile {id} /></li>
+            <li>
+              <button type="button" class="tap" aria-label="discard {kindOf(id)}" onclick={() => ontap?.(id)}>
+                <Tile {id} />
+              </button>
+            </li>
           {/each}
         </ul>
         <!-- The draw sits apart from the sorted hand, as core holds it apart from the
              13 tiles. Opponents' draws are concealed information and never render. -->
         {#if table.turn === 0 && table.drawn !== null}
-          <span class="drawn" aria-label="drawn tile"><Tile id={table.drawn} /></span>
+          <span class="drawn" aria-label="drawn tile">
+            <button type="button" class="tap" aria-label="discard {kindOf(table.drawn)}" onclick={() => table.drawn !== null && ontap?.(table.drawn)}>
+              <Tile id={table.drawn} />
+            </button>
+          </span>
         {/if}
       {/if}
     </div>
@@ -154,6 +164,15 @@
   .drawn {
     margin-top: 0.25rem;
     text-transform: none;
+  }
+
+  /* Tap targets carry no chrome of their own — the tile chip stays the visual unit. */
+  .tap {
+    padding: 0;
+    background: none;
+    border: none;
+    font: inherit;
+    cursor: pointer;
   }
 
   .ended {
