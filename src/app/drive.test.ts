@@ -90,9 +90,11 @@ describe('forcedAction', () => {
     expect(forcedAction(offered, PLAYER)).toBe(offered[0])
   })
 
-  it("forces a bot seat's draw", () => {
+  it("forces a bot seat's draw, passing on the claim offers behind it", () => {
+    // East's fresh 8s discard is chi-able by South here, so the offering is no longer
+    // a singleton — the draw at the head still wins, and the window goes stale.
     const offered = legalActions(beforeSouthDraw)
-    expect(offered).toEqual([{ type: 'draw', seat: 1 }])
+    expect(offered[0]).toEqual({ type: 'draw', seat: 1 })
     expect(forcedAction(offered, PLAYER)).toBe(offered[0])
   })
 

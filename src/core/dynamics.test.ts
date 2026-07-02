@@ -31,20 +31,32 @@ const seedArb = fc.integer({ min: 0, max: 0xffffffff })
 const FULL_TURNS = LIVE_WALL_SIZE - DEAL_SIZE // 70
 
 /**
- * Drive a game from the dealt table, choosing every move from legalActions: one choice
- * is consumed per post-draw point (the only point offering more than one action), so
- * `choices.length` bounds the game at that many complete turns; the walk stops cleanly
- * pre-draw when choices run out, or when the offered set empties (ryuukyoku). State
- * only ever advances by refolding the longer record — foldRecord stays the single
- * authority, no step logic is reimplemented here. The hard bound converts any future
- * non-terminating turn loop into a thrown error instead of a hung test run.
+ * The generator's slice of the offered set: draws and discards only. legalActions now
+ * offers claims and kans too, but random trajectories over the full call vocabulary
+ * are T-004-01-04's charter — until that ticket grows this generator, claims stay out
+ * so every property below keeps its exact draw/discard shape (140-action games, one
+ * pond tile per draw, draw/discard-only mutants).
+ */
+function drawsAndDiscards(offered: readonly HandAction[]): HandAction[] {
+  return offered.filter((a) => a.type === 'draw' || a.type === 'discard')
+}
+
+/**
+ * Drive a game from the dealt table, choosing every move from legalActions' draw/
+ * discard slice: one choice is consumed per post-draw point (the only point offering
+ * more than one such action), so `choices.length` bounds the game at that many
+ * complete turns; the walk stops cleanly pre-draw when choices run out, or when the
+ * offered set empties (ryuukyoku). State only ever advances by refolding the longer
+ * record — foldRecord stays the single authority, no step logic is reimplemented
+ * here. The hard bound converts any future non-terminating turn loop into a thrown
+ * error instead of a hung test run.
  */
 function playRecord(seed: number, choices: readonly number[]): HandRecord {
   const actions: HandAction[] = []
   const bound = 2 * FULL_TURNS + 2
   let c = 0
   for (;;) {
-    const legal = legalActions(foldRecord({ seed, actions }))
+    const legal = drawsAndDiscards(legalActions(foldRecord({ seed, actions })))
     if (legal.length === 0) return { seed, actions }
     if (legal.length === 1) {
       if (c >= choices.length) return { seed, actions }
@@ -88,7 +100,7 @@ const gameArb = fc
   .map(({ seed, choices, dangle }) => {
     const record = playRecord(seed, choices)
     if (dangle) {
-      const legal = legalActions(foldRecord(record))
+      const legal = drawsAndDiscards(legalActions(foldRecord(record)))
       if (legal.length === 1) return { seed, actions: [...record.actions, legal[0]] }
     }
     return record
@@ -156,11 +168,15 @@ describe('fold determinism over random play', () => {
   })
 })
 
-/** Membership key for offered-set checks (mirrored from legal.test.ts). */
+/**
+ * Membership key for offered-set checks (mirrored from legal.test.ts): `uses` are
+ * serialized SORTED, so membership is insensitive to the recorded copy order — the
+ * fold accepts any order, and offers canonicalize theirs.
+ */
 function keyOf(action: HandAction): string {
-  return 'tile' in action
-    ? `${action.type}:${action.seat}:${action.tile}`
-    : `${action.type}:${action.seat}`
+  const uses = 'uses' in action ? `:${[...action.uses].sort((a, b) => a - b).join(',')}` : ''
+  const tile = 'tile' in action ? `:${action.tile}` : ''
+  return `${action.type}:${action.seat}${tile}${uses}`
 }
 
 /**
@@ -193,7 +209,7 @@ describe('mutated sequences throw', () => {
         const i = at % actions.length
         const action = actions[i]
         const seat = ((action.seat + bump) % SEAT_COUNT) as Seat
-        // The generator only emits draws and discards (legalActions offers no more yet).
+        // The generator only emits draws and discards (drawsAndDiscards filters).
         const mutant: HandAction =
           action.type === 'discard' ? { type: 'discard', seat, tile: action.tile } : { type: 'draw', seat }
         assertMutantThrows(seed, actions.slice(0, i), mutant, actions.slice(i + 1))

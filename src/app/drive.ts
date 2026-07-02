@@ -34,14 +34,18 @@ export function tapDiscard(
  * The action that happens without player input, or null when the game waits on the
  * player's discard choice or has ended (empty offering — the loop's halt condition):
  *
- * - any draw is forced, the player's included — a draw is never a choice (legalActions
- *   offers it as a singleton);
- * - a non-player discard offering forces tsumogiri: the LAST offered discard, by
- *   legalActions' frozen hand-order-then-drawn-last contract (sampling by index is that
- *   contract's blessed use). A real bot later replaces exactly this arm.
+ * - a draw at the head is forced, the player's included — a draw is never a choice
+ *   (legalActions puts the turn seat's draw first at every pre-draw state). Claim
+ *   offers listed after it are never auto-taken: forcing the draw lets the discard go
+ *   stale, i.e. every seat passes on calls until a claim UI / real bot ticket;
+ * - a non-player discard obligation forces tsumogiri: the LAST offered DISCARD, which
+ *   is the drawn tile by legalActions' frozen hand-order-then-drawn-last contract.
+ *   The reverse scan (not offered[offered.length - 1]) matters because kan offers
+ *   follow the discards — a bot holding four of a kind must still tsumogiri, never
+ *   silently kan. A real bot later replaces exactly this arm.
  *
- * Classifying by offered[0] is sound because an offering is homogeneous — all draws or
- * all discards, all by the turn seat (legalActions' documented closed form).
+ * Classifying by offered[0] is sound because the head is the frozen order's anchor:
+ * the draw at pre-draw states, the first hand discard otherwise, always the turn seat.
  */
 export function forcedAction(
   offered: readonly HandAction[],
@@ -51,5 +55,9 @@ export function forcedAction(
   if (head === undefined) return null
   if (head.type === 'draw') return head
   if (head.seat === player) return null
-  return offered[offered.length - 1]
+  for (let i = offered.length - 1; i >= 0; i--) {
+    const action = offered[i]
+    if (action.type === 'discard') return action
+  }
+  return null
 }
