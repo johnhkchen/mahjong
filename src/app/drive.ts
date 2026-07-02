@@ -9,7 +9,7 @@
 // never call). The PLAYER's claims are the exception: forcedAction waits on them, and
 // tapClaim/passClaim select the call or the decline from the same offered set.
 
-import type { HandAction, Seat, TileId } from '../core'
+import { kindOf, type HandAction, type Seat, type TileId } from '../core'
 
 /** The human's seat — East, the dealer. Table.svelte presents the same fact. */
 export const PLAYER: Seat = 0
@@ -49,6 +49,31 @@ export interface ClaimChoice {
  */
 export function claimChoices(offered: readonly HandAction[], player: Seat): HandAction[] {
   return offered.filter((action) => isClaim(action) && action.seat === player)
+}
+
+/**
+ * claimChoices deduped for presentation: the FIRST offer of each (call form,
+ * `uses` kinds) group, frozen order preserved — still elements of `offered` itself.
+ * The enumeration is complete, not minimal (a triplet holder has three pon pairs
+ * that differ only in which physical copies they expose), and until red fives make
+ * copies non-interchangeable those variants are indistinguishable buttons; the
+ * prompt renders THIS list, one button per choice a learner could mean. Keeping the
+ * first of a group is canonical: `uses` come in hand order, so the survivor is the
+ * combination the enumeration named first. Shape-distinct chi variants and distinct
+ * call forms always differ in kinds, so they always survive. Kinds are read only to
+ * GROUP offers, never to build one — selection stays tapClaim's. Empty exactly when
+ * claimChoices is empty (a dedupe never empties a non-empty list), so the prompt's
+ * visibility and forcedAction's wait remain one predicate family.
+ */
+export function promptChoices(offered: readonly HandAction[], player: Seat): HandAction[] {
+  const seen = new Set<string>()
+  return claimChoices(offered, player).filter((action) => {
+    if (!isClaim(action)) return false // unreachable past claimChoices; type-narrows
+    const key = `${action.type}|${action.uses.map(kindOf).join(',')}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
 }
 
 /** Ordered equality — `uses` order is canonical legalActions output, echoed back. */

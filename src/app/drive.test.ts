@@ -12,7 +12,15 @@
 
 import { describe, expect, it } from 'vitest'
 import { foldRecord, legalActions, type HandAction, type Seat, type TileId } from '../core'
-import { claimChoices, forcedAction, passClaim, PLAYER, tapClaim, tapDiscard } from './drive'
+import {
+  claimChoices,
+  forcedAction,
+  passClaim,
+  PLAYER,
+  promptChoices,
+  tapClaim,
+  tapDiscard,
+} from './drive'
 
 // The frozen anchor seed shared with the other suites (wall golden vector, App boot).
 const SEED = 1
@@ -75,6 +83,16 @@ const EAST_PON_5 = { type: 'pon', uses: [93, 95] } as const
 const dealt15 = foldRecord({ seed: 15, actions: [] })
 const mixedWindow15 = foldRecord({ seed: 15, actions: tsumogiriTurns(dealt15.live, 8) })
 
+// Seed 212 — the triplet-holder window (scratchpad-scanned like the others): after six
+// tsumogiri turns South discards 103 (8s); EAST holds all three remaining 8s copies
+// [100, 102, 101] (hand order), so the window offers East three identical-kind pon
+// pairs [100,102]/[100,101]/[102,101] AND the daiminkan [100,102,101] — the positive
+// kan anchor -02-01 left open, and the maximal dedupe case in one state. Head is
+// WEST's draw.
+const dealt212 = foldRecord({ seed: 212, actions: [] })
+const kanWindow212 = foldRecord({ seed: 212, actions: tsumogiriTurns(dealt212.live, 6) })
+const EAST_KAN_212 = { type: 'daiminkan', uses: [100, 102, 101] } as const
+
 describe('claimChoices', () => {
   it("returns exactly the player's offers, elements of the offered array itself", () => {
     const offered = legalActions(raceWindow3)
@@ -117,7 +135,74 @@ describe('claimChoices', () => {
   })
 })
 
+describe('promptChoices', () => {
+  it('collapses duplicate-copy chi variants to the first offered — one button per meaning', () => {
+    // Seed 3: East's two variants are one shape (1p+3p) through different 3p copies —
+    // indistinguishable buttons until red fives. The survivor is the enumeration's
+    // first, an element of the offered array itself.
+    const offered = legalActions(raceWindow3)
+    const prompt = promptChoices(offered, PLAYER)
+    expect(prompt).toHaveLength(1)
+    expect(prompt[0]).toBe(claimChoices(offered, PLAYER)[0])
+    expect(prompt[0]).toEqual({ type: 'chi', seat: PLAYER, tile: 42, uses: EAST_CHI_A.uses })
+  })
+
+  it('collapses a triplet holder\'s three pon pairs and keeps the kan — distinct forms survive', () => {
+    const offered = legalActions(kanWindow212)
+    expect(claimChoices(offered, PLAYER)).toHaveLength(4) // 3 pons + 1 daiminkan
+    const prompt = promptChoices(offered, PLAYER)
+    expect(prompt.map((c) => c.type)).toEqual(['pon', 'daiminkan'])
+    expect(prompt[0]).toBe(claimChoices(offered, PLAYER)[0]) // the first pair, [100, 102]
+    expect(prompt[1]).toBe(claimChoices(offered, PLAYER)[3])
+  })
+
+  it('passes shape-distinct variants and mixed forms through untouched, order preserved', () => {
+    // Seed 15: pon + two chis of DIFFERENT shapes — every choice means something
+    // different, so the prompt list IS the claim list, same elements, same order.
+    const offered = legalActions(mixedWindow15)
+    expect(promptChoices(offered, PLAYER)).toEqual(claimChoices(offered, PLAYER))
+    promptChoices(offered, PLAYER).forEach((choice, i) => {
+      expect(choice).toBe(claimChoices(offered, PLAYER)[i])
+    })
+  })
+
+  it('is empty exactly where claimChoices is empty — prompt visibility IS the loop\'s wait', () => {
+    const anchors = [
+      dealt,
+      afterEastDraw,
+      beforeSouthDraw,
+      afterSouthDraw,
+      raceWindow3,
+      ponWindow5,
+      mixedWindow15,
+      kanWindow212,
+      exhausted,
+    ]
+    for (const state of anchors) {
+      const offered = legalActions(state)
+      expect(promptChoices(offered, PLAYER).length === 0).toBe(
+        claimChoices(offered, PLAYER).length === 0,
+      )
+      // And therefore: the prompt shows ⇔ forcedAction waits on a claim (pass exists).
+      expect(promptChoices(offered, PLAYER).length > 0).toBe(
+        passClaim(offered, PLAYER) !== null,
+      )
+    }
+  })
+})
+
 describe('tapClaim', () => {
+  it('returns the offered daiminkan itself — the positive kan selection', () => {
+    const offered = legalActions(kanWindow212)
+    const kan = tapClaim(offered, PLAYER, EAST_KAN_212)
+    expect(kan).toBe(claimChoices(offered, PLAYER)[3])
+    expect(kan).toEqual({ type: 'daiminkan', seat: PLAYER, tile: 103, uses: [100, 102, 101] })
+    // The identical-kind pon pairs stay individually selectable by exact copies.
+    expect(tapClaim(offered, PLAYER, { type: 'pon', uses: [102, 101] })).toBe(
+      claimChoices(offered, PLAYER)[2],
+    )
+  })
+
   it('returns the offered element itself for each chi variant — variants distinguished by uses', () => {
     const offered = legalActions(raceWindow3)
     const [variantA, variantB] = claimChoices(offered, PLAYER)
