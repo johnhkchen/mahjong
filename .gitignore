@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.wrangler/
+.vite/
+*.tsbuildinfo
+coverage/
+.flox/run/
+.flox/cache/
+.flox/log/
+.DS_Store
