@@ -67,23 +67,48 @@ export interface HandRecord {
 }
 
 /**
- * One exposed meld in the derived view. The claimed tile stays COUNTED in the
- * discarder's pond (ponds keep the complete discard history — furiten and defense
- * reads treat a claimed-away tile as still discarded); `(from, claimed)` is the mark
- * identifying it there. Only `own` — the tiles spliced out of the caller's hand —
- * joins the conservation partition as the melds zone. Part of the derived view, not
- * the record contract: the kan ticket may widen this shape (ankan has no claimed
- * tile) without invalidating any stored hand.
+ * One exposed meld in the derived view — a discriminated union over the call forms.
+ * For every claiming form (chi/pon/daiminkan/shouminkan) the claimed tile stays
+ * COUNTED in the discarder's pond (ponds keep the complete discard history — furiten
+ * and defense reads treat a claimed-away tile as still discarded); `(from, claimed)`
+ * is the mark identifying it there. Only `own` — the tiles that left the owner's
+ * hand (and, for kans, the drawn slot) — joins the conservation partition as the
+ * melds zone; ankan has no claimed tile at all, so all four of its tiles are `own`.
+ * A shouminkan REPLACES the upgraded pon in place (same index in the seat's meld
+ * list, `claimed`/`from` preserved, `own` = the pon's pair plus the added tile), so
+ * meld order stays claim order and the pond mark survives the upgrade. Part of the
+ * derived view, not the record contract — this union may widen again without
+ * invalidating any stored hand.
  */
-export interface Meld {
-  readonly type: 'chi' | 'pon'
-  /** The claimed discard — displayed in the meld, counted in ponds[from]. */
-  readonly claimed: TileId
-  /** The seat it was claimed from. */
-  readonly from: Seat
-  /** The caller's tiles exposed from hand, in the order the log recorded them. */
-  readonly own: readonly [TileId, TileId]
-}
+export type Meld =
+  | {
+      readonly type: 'chi' | 'pon'
+      /** The claimed discard — displayed in the meld, counted in ponds[from]. */
+      readonly claimed: TileId
+      /** The seat it was claimed from. */
+      readonly from: Seat
+      /** The caller's tiles exposed from hand, in the order the log recorded them. */
+      readonly own: readonly [TileId, TileId]
+    }
+  | {
+      readonly type: 'daiminkan'
+      readonly claimed: TileId
+      readonly from: Seat
+      readonly own: readonly [TileId, TileId, TileId]
+    }
+  | {
+      readonly type: 'shouminkan'
+      /** The pon's claimed discard, preserved through the upgrade. */
+      readonly claimed: TileId
+      readonly from: Seat
+      /** The pon's pair in recorded order, then the added fourth copy. */
+      readonly own: readonly [TileId, TileId, TileId]
+    }
+  | {
+      readonly type: 'ankan'
+      /** All four copies, in the order the log recorded them — nothing was claimed. */
+      readonly own: readonly [TileId, TileId, TileId, TileId]
+    }
 
 /**
  * The table as it stands after folding a record. A DERIVED VIEW, not a frozen
@@ -103,12 +128,27 @@ export interface TableState {
    * first draw. Fresh array per fold.
    */
   live: TileId[]
-  /** The 14-tile dead wall, frozen layout per WallPartition.dead. Fresh per fold. */
+  /**
+   * The 14-tile dead wall, initial layout per WallPartition.dead. Fresh per fold.
+   * Kans mutate it while keeping it at exactly 14 tiles: each kan's rinshan draw
+   * leaves the front (dead[0..3] in draw order) and the live wall's TAIL tile joins
+   * the end as the replacement — so after k kans the array is the original layout's
+   * tiles [k..13] followed by the k moved tail tiles.
+   */
   dead: TileId[]
-  /** The flipped physical indicator tile — dead[INITIAL_DORA_INDICATOR_INDEX]. */
+  /** The initially flipped indicator tile — dead[INITIAL_DORA_INDICATOR_INDEX]. */
   doraIndicator: TileId
-  /** The mapped dora kind the indicator points at (doraKindOf over its kind). */
+  /** The mapped dora kind the initial indicator points at (doraKindOf over its kind). */
   dora: TileKind
+  /**
+   * Every flipped indicator tile in flip order: [0] is always `doraIndicator` (the
+   * initial flip at dead[4]); each kan appends the next indicator, walking rightward
+   * through the frozen layout (dead[6], dead[8], dead[10], dead[12] — original
+   * indices). The flip is immediate, inside the kan step. Fresh array per fold.
+   */
+  doraIndicators: TileId[]
+  /** The mapped dora kind of each flipped indicator, same order. Fresh per fold. */
+  doras: TileKind[]
   /**
    * Four discard ponds indexed by Seat, each in discard order — the order IS the
    * pond's meaning (future defense reads depend on it). Fresh arrays per fold.
@@ -146,7 +186,9 @@ export interface TableState {
   /**
    * 'playing' until the discard that follows the draw emptying the live wall lands;
    * then 'ryuukyoku' (exhaustive draw) — i.e. an ended phase exactly when live is
-   * empty. A widenable literal union: agari tickets add winning endings.
+   * empty. Kans shorten the live wall (the tail tile replaces the rinshan draw), so
+   * exhaustive draw arrives one discard earlier per kan — through this same
+   * condition. A widenable literal union: agari tickets add winning endings.
    */
   phase: 'playing' | 'ryuukyoku'
 }
@@ -360,12 +402,15 @@ function applyAction(state: TableState, action: HandAction, index: number): void
 export function foldRecord(record: HandRecord): TableState {
   const { live, dead, doraIndicator } = partitionWall(buildWall(record.seed))
   const deal = dealHands(live)
+  const dora = doraKindOf(kindOf(doraIndicator))
   const state: TableState = {
     hands: deal.hands,
     live: deal.live,
     dead,
     doraIndicator,
-    dora: doraKindOf(kindOf(doraIndicator)),
+    dora,
+    doraIndicators: [doraIndicator],
+    doras: [dora],
     ponds: [[], [], [], []],
     melds: [[], [], [], []],
     claimable: null,

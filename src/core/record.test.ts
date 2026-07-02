@@ -73,6 +73,8 @@ describe('hand-record fold entrypoint', () => {
           dead: partition.dead,
           doraIndicator: partition.doraIndicator,
           dora: doraKindOf(kindOf(partition.doraIndicator)),
+          doraIndicators: [partition.doraIndicator],
+          doras: [doraKindOf(kindOf(partition.doraIndicator))],
           ponds: [[], [], [], []],
           melds: [[], [], [], []],
           claimable: null,
@@ -169,6 +171,8 @@ describe('hand-record fold entrypoint', () => {
     expect(state.dead).toEqual([80, 41, 88, 6, 24, 128, 112, 124, 30, 99, 43, 101, 108, 75])
     expect(state.doraIndicator).toBe(24)
     expect(state.dora).toBe('8m')
+    expect(state.doraIndicators).toEqual([24])
+    expect(state.doras).toEqual(['8m'])
   })
 })
 
@@ -326,6 +330,7 @@ describe('chi/pon claims fold', () => {
     const state = foldRecord({ seed: 1, actions: [...chiPrefix, CHI] })
     expect(state.ponds[0]).toEqual([100]) // the discard history keeps the claimed tile
     const meld = state.melds[1][0]
+    if (meld.type === 'ankan') throw new Error('unreachable: the folded meld is a chi')
     expect(state.ponds[meld.from]).toContain(meld.claimed) // the mark is the join
   })
 
