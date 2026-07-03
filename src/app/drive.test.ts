@@ -31,10 +31,12 @@ import {
   forcedAction,
   PLAYER,
   promptChoices,
+  riichiPrompt,
   seatScoresOf,
   settleWindow,
   tapClaim,
   tapDiscard,
+  tenpaiHint,
   winChoice,
 } from './drive'
 
@@ -165,6 +167,17 @@ function dealtLive(seed: number): readonly TileId[] {
 const botRonWindow = foldRecord({ seed: 3951, actions: tsumogiriTurns(dealtLive(3951), 1) })
 const furitenWindow = foldRecord({ seed: 23798, actions: tsumogiriTurns(dealtLive(23798), 21) })
 const yakulessWindow = foldRecord({ seed: 12754, actions: tsumogiriTurns(dealtLive(12754), 2) })
+
+// The riichi-prompt anchor (T-009-03-01, scratchpad-scanned — never regenerate): seed
+// 397, East's own opening draw (turn 0, before any other seat has moved) lands the
+// dealer's 14-tile hand at exactly ONE tenpai-preserving discard — tile 130 (6z,
+// hatsu) — a lone honor with no other copy in hand. `discardPolicy` independently
+// agrees (its own shanten-minimizing tie-break lands on the identical tile), which is
+// this anchor's whole point: it is NOT merely "the first riichi offer," it is also
+// the recommendation an own-turn bot would make.
+const RIICHI_SEED = 397
+const riichiPoint = foldRecord({ seed: RIICHI_SEED, actions: [{ type: 'draw', seat: 0 }] })
+const RIICHI_TILE: TileId = 130
 
 // seatScoresOf (T-008-03-02) — the one place a game's dealer rotation becomes
 // visible in the UI at all under this ticket's scope (PLAYER stays pinned at
@@ -582,6 +595,94 @@ describe('winChoice', () => {
     expect(winChoice(doctored, PLAYER)).toBeNull()
     // The legality is coming from nowhere but the list: the fold WOULD accept the
     // ron (it is this anchor's whole point), but the seam can no longer build it.
+  })
+})
+
+describe('riichiPrompt', () => {
+  it('resolves the one tenpai-preserving tile at the RIICHI_SEED anchor — declare and decline both elements of offered', () => {
+    const offered = legalActions(riichiPoint)
+    const riichiOffers = offered.filter((a) => a.type === 'riichi')
+    expect(riichiOffers).toEqual([{ type: 'riichi', seat: PLAYER, tile: RIICHI_TILE }])
+    const found = riichiPrompt(riichiPoint, offered, PLAYER)
+    expect(found).not.toBeNull()
+    expect(found!.tile).toBe(RIICHI_TILE)
+    // toBe, not toEqual: both fold targets ARE legalActions output, never lookalikes.
+    expect(found!.declare).toBe(riichiOffers[0])
+    expect(found!.decline).toBe(
+      offered.find((a) => a.type === 'discard' && a.tile === RIICHI_TILE),
+    )
+    expect(found!.declare).toEqual({ type: 'riichi', seat: PLAYER, tile: RIICHI_TILE })
+    expect(found!.decline).toEqual({ type: 'discard', seat: PLAYER, tile: RIICHI_TILE })
+    // Independent oracle: discardPolicy's own answer over the same view agrees —
+    // the prompt's tile is never a different one than the AI itself would play.
+    expect(discardPolicy(seatView(riichiPoint, PLAYER), offered)).toEqual(found!.declare)
+  })
+
+  it('is null wherever no riichi offer exists for the player', () => {
+    for (const state of [dealt, afterEastDraw, beforeSouthDraw, afterSouthDraw, exhausted]) {
+      expect(riichiPrompt(state, legalActions(state), PLAYER)).toBeNull()
+    }
+  })
+
+  it('is null when a win is offered too — the win prompt owns that moment, not this one', () => {
+    // The tsumoPoint anchor (winChoice's own fixture): every one of the 14 discard
+    // candidates also leaves this hand at tenpai, so 14 riichi offers sit alongside
+    // the tsumo — riichiPrompt defers to winChoice rather than naming a tile here.
+    const offered = legalActions(tsumoPoint)
+    expect(offered.filter((a) => a.type === 'riichi').length).toBe(14)
+    expect(winChoice(offered, PLAYER)).not.toBeNull()
+    expect(riichiPrompt(tsumoPoint, offered, PLAYER)).toBeNull()
+  })
+
+  it('rejects a riichi offer removed from a doctored list even though the fold would accept it', () => {
+    const doctored = legalActions(riichiPoint).filter((a) => a.type !== 'riichi')
+    expect(riichiPrompt(riichiPoint, doctored, PLAYER)).toBeNull()
+  })
+})
+
+describe('tenpaiHint', () => {
+  it('reads the fold-derived shanten count at a real mid-hand, pre-tenpai point', () => {
+    // The app.ssr.test.ts "mid-hand table view" anchor, verbatim: 8 tsumogiri turns
+    // with East's first discard swapped to tedashi, then a pending 9th draw by East.
+    const midHandActions = tsumogiriTurns(dealt.live, 8)
+    midHandActions[1] = { type: 'discard', seat: 0, tile: dealt.hands[0][0] }
+    midHandActions.push({ type: 'draw', seat: 0 })
+    const midHand = foldRecord({ seed: SEED, actions: midHandActions })
+    expect(midHand.riichi[0]).toBe(false)
+    const hint = tenpaiHint(seatView(midHand, PLAYER))
+    // Independent oracle: shanten itself, over the identical 14-tile arity.
+    expect(hint).toBe(shanten([...midHand.hands[0], midHand.drawn!].map(kindOf), []))
+    expect(hint).toBe(2)
+  })
+
+  it('is null before this seat holds a draw — nothing to hint between turns', () => {
+    expect(tenpaiHint(seatView(dealt, PLAYER))).toBeNull()
+    expect(tenpaiHint(seatView(beforeSouthDraw, 1))).toBeNull()
+  })
+
+  it('is null exactly at tenpai and at an outright completion — the riichi/win prompts own those', () => {
+    expect(tenpaiHint(seatView(riichiPoint, PLAYER))).toBeNull() // shanten 0
+    expect(tenpaiHint(seatView(tsumoPoint, PLAYER))).toBeNull() // shanten -1, complete
+  })
+
+  it('is null once this seat is locked into riichi — forced tsumogiri, nothing left to hint', () => {
+    const live397 = foldRecord({ seed: RIICHI_SEED, actions: [] }).live
+    const locked = foldRecord({
+      seed: RIICHI_SEED,
+      actions: [
+        { type: 'draw', seat: 0 },
+        { type: 'riichi', seat: 0, tile: RIICHI_TILE },
+        { type: 'draw', seat: 1 },
+        { type: 'discard', seat: 1, tile: live397[1] },
+        { type: 'draw', seat: 2 },
+        { type: 'discard', seat: 2, tile: live397[2] },
+        { type: 'draw', seat: 3 },
+        { type: 'discard', seat: 3, tile: live397[3] },
+        { type: 'draw', seat: 0 },
+      ],
+    })
+    expect(locked.riichi[0]).toBe(true)
+    expect(tenpaiHint(seatView(locked, PLAYER))).toBeNull()
   })
 })
 

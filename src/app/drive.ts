@@ -19,9 +19,11 @@ import {
   discardPolicy,
   kindOf,
   seatView,
+  shanten,
   type HandAction,
   type Player,
   type Seat,
+  type SeatView,
   type TableState,
   type TileId,
 } from '../core'
@@ -247,6 +249,77 @@ export function winChoice(offered: readonly HandAction[], player: Seat): HandAct
       (action) => (action.type === 'tsumo' || action.type === 'ron') && action.seat === player,
     ) ?? null
   )
+}
+
+/**
+ * The riichi decision point (T-009-03-01) — "you're tenpai, declare riichi?" made
+ * concrete: the ONE candidate tile the console asks about, plus both fold targets,
+ * every one an element of `offered` itself. Null unless `offered` holds a riichi
+ * offer for `player` at all (most turns; the ordinary case) or a win is offered
+ * instead (winChoice takes precedence — discarding into a riichi when the drawn tile
+ * already completes the hand is never the moment this prompt owns). The candidate
+ * tile is NOT "first offered" (an arbitrary tile when several tenpai-preserving
+ * discards exist): it is whichever tile `discardPolicy` — the identical, already-
+ * exported bot decision — would choose for this seat's own turn, so the prompt never
+ * shows a different tile than the one the AI itself would play, and the one
+ * documented exception (a dead wait, policy.ts's own isDeadWait) resolves for free —
+ * discardPolicy still names the SAME tile, just returning its plain discard instead
+ * of the riichi action, so `decline` is `discardPolicy`'s own result and `declare` is
+ * looked up alongside it (or vice versa when discardPolicy does declare). Every
+ * lookup is `offered.find`, never a constructed literal — legality stays legal.ts's
+ * alone, per this module's own header.
+ */
+export interface RiichiPrompt {
+  /** The physical tile both fold targets discard — the prompt's one subject. */
+  readonly tile: TileId
+  /** The 'riichi' element of `offered` for this tile. */
+  readonly declare: HandAction
+  /** The plain 'discard' element of `offered` for the identical tile. */
+  readonly decline: HandAction
+}
+
+export function riichiPrompt(
+  state: TableState,
+  offered: readonly HandAction[],
+  player: Seat,
+): RiichiPrompt | null {
+  if (winChoice(offered, player) !== null) return null
+  const anyRiichi = offered.some((action) => action.type === 'riichi' && action.seat === player)
+  if (!anyRiichi) return null
+  const recommendation = discardPolicy(seatView(state, player), offered)
+  if (recommendation.type === 'riichi' && recommendation.seat === player) {
+    const decline = offered.find(
+      (action) =>
+        action.type === 'discard' && action.seat === player && action.tile === recommendation.tile,
+    )
+    if (decline === undefined) return null
+    return { tile: recommendation.tile, declare: recommendation, decline }
+  }
+  if (recommendation.type === 'discard' && recommendation.seat === player) {
+    const declare = offered.find(
+      (action) =>
+        action.type === 'riichi' && action.seat === player && action.tile === recommendation.tile,
+    )
+    if (declare === undefined) return null
+    return { tile: recommendation.tile, declare, decline: recommendation }
+  }
+  return null
+}
+
+/**
+ * The pre-tenpai teaching hint (T-009-03-01): "N away from tenpai," reading `shanten`
+ * directly — no engine logic of its own, only the arity choice `shanten` itself
+ * requires. Null whenever there is nothing to hint: `view.drawn === null` (not this
+ * seat's own discard decision right now — between turns or another seat's point),
+ * `view.riichi[view.seat]` (locked; every later turn is forced tsumogiri, hinting is
+ * moot), or the computed shanten is `<= 0` (tenpai or an outright completion — the
+ * riichi prompt or the win offer owns that moment, never this hint).
+ */
+export function tenpaiHint(view: SeatView): number | null {
+  const seat = view.seat
+  if (view.drawn === null || view.riichi[seat]) return null
+  const value = shanten([...view.hand, view.drawn].map(kindOf), view.melds[seat])
+  return value <= 0 ? null : value
 }
 
 /**
