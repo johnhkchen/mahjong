@@ -1,5 +1,6 @@
 <script lang="ts">
   import { kindIndexOf, kindOf, type TableState, type TileId } from '../core'
+  import { term, windTerm } from './dictionary.svelte'
   import HandEnd from './HandEnd.svelte'
   import Tile from './Tile.svelte'
 
@@ -55,13 +56,15 @@
   // edge — the mapping lives once in grid-template-areas below. SEATS is in Seat
   // order (0=E, 1=S, 2=W, 3=N), so the loop index below reads table.ponds and
   // table.turn directly. Pond labels are deliberately lowercase — a distinct aria
-  // vocabulary from the wind display names.
-  const SEATS = [
-    { wind: 'East', pond: 'east pond', area: 'east', you: true },
-    { wind: 'South', pond: 'south pond', area: 'south', you: false },
-    { wind: 'West', pond: 'west pond', area: 'west', you: false },
-    { wind: 'North', pond: 'north pond', area: 'north', you: false },
-  ] as const
+  // vocabulary from the wind display names, unaffected by terminology (T-010-01-01).
+  // `wind` is a $derived read (not a plain literal) so it follows the active
+  // terminology via windTerm() — the dictionary's own module state.
+  const SEATS = $derived([
+    { wind: windTerm(0), pond: 'east pond', area: 'east', you: true },
+    { wind: windTerm(1), pond: 'south pond', area: 'south', you: false },
+    { wind: windTerm(2), pond: 'west pond', area: 'west', you: false },
+    { wind: windTerm(3), pond: 'north pond', area: 'north', you: false },
+  ] as const)
 </script>
 
 <section class="table" aria-label="mahjong table">
@@ -128,12 +131,12 @@
              values in — this component derives neither. -->
         {#if furitenTile != null}
           <p class="furiten" aria-label="furiten">
-            振聴 — ron is sealed on <Tile id={furitenTile} />; tsumo still wins
+            {term('furiten')} — {term('ron')} is sealed on <Tile id={furitenTile} />; {term('tsumo')} still wins
           </p>
         {/if}
         {#if yakulessTenpai}
           <p class="yakuless" aria-label="yakuless tenpai">
-            no yaku — this hand can only win by tsumo; riichi would fix this
+            no yaku — this hand can only win by {term('tsumo')}; {term('riichi')} would fix this
           </p>
         {/if}
       {/if}
