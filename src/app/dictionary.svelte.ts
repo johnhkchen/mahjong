@@ -57,25 +57,47 @@ const TERMS: Record<TermKey, Record<Terminology, string>> = {
   han: { romaji: 'han', 'zh-hant': '翻' },
 }
 
+const STORAGE_KEY = 'mahjong-terminology'
+
+function isTerminology(value: string | null): value is Terminology {
+  return value === 'romaji' || value === 'zh-hant'
+}
+
+/** Reads the persisted terminology at module load — the "read at boot" the toggle
+ *  (T-010-01-02) needs. Guarded on `window`, not `localStorage`, directly: the Node
+ *  test project (app.ssr.test.ts) runs plain Node, where `globalThis.localStorage`
+ *  is itself an accessor that emits an ExperimentalWarning the instant it's read
+ *  (even via `typeof`) — gating on `window`'s plain absence never touches that
+ *  accessor at all, so no warning fires. A malformed/foreign stored value falls
+ *  back to the default rather than throwing. */
+function loadStored(): Terminology {
+  if (typeof window === 'undefined') return 'romaji'
+  const stored = window.localStorage.getItem(STORAGE_KEY)
+  return isTerminology(stored) ? stored : 'romaji'
+}
+
 // Module-scoped rune, not prop-drilled or context-provided (design.md Decision 1): every
-// consumer reads `term()`/`windTerm()` directly, so a future toggle (T-010-01-02) only needs to
-// call `setTerminology()` on click plus a `localStorage` read/write effect — no consumer here
-// changes again.
-let current = $state<Terminology>('romaji')
+// consumer reads `term()`/`windTerm()` directly, so App.svelte's toggle (T-010-01-02) only
+// needed a setter call on click plus the guarded localStorage read/write below — no consumer
+// here changed again.
+let current = $state<Terminology>(loadStored())
 
 /** The active terminology's rendering of `key`. */
 export function term(key: TermKey): string {
   return TERMS[key][current]
 }
 
-/** The active terminology itself — read by a future toggle UI's own display state. */
+/** The active terminology itself — read by App.svelte's toggle for its own display state. */
 export function activeTerminology(): Terminology {
   return current
 }
 
-/** Sets the active terminology. Unused by any consumer in this ticket; exported for T-010-01-02. */
+/** Sets the active terminology and persists the choice to the one storage key
+ *  (T-010-01-02). Guarded the same way loadStored() is — a no-op write under the
+ *  Node test project, never throws and never warns. */
 export function setTerminology(next: Terminology): void {
   current = next
+  if (typeof window !== 'undefined') window.localStorage.setItem(STORAGE_KEY, next)
 }
 
 const SEAT_TERMS: readonly TermKey[] = ['east', 'south', 'west', 'north']

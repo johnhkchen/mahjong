@@ -25,6 +25,9 @@ export default defineConfig({
           name: 'dom',
           environment: 'jsdom',
           include: ['src/**/*.svelte.test.ts'],
+          // Node's own built-in `localStorage` global shadows jsdom's real one in
+          // this environment/version combination — see the file's own comment.
+          setupFiles: ['./src/app/vitest-dom-setup.ts'],
         },
       },
     ],
