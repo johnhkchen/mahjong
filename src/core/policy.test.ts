@@ -14,6 +14,7 @@ import {
   DEAL_SIZE,
   LIVE_WALL_SIZE,
   SEAT_COUNT,
+  callPolicy,
   discardPolicy,
   foldRecord,
   kindOf,
@@ -64,6 +65,8 @@ function viewOf(partial: {
   drawn?: TileId | null
   melds?: readonly Meld[]
   mustDiscard?: boolean
+  claimable?: SeatView['claimable']
+  phase?: SeatView['phase']
 }): SeatView {
   const seat = partial.seat ?? 0
   const melds: [Meld[], Meld[], Meld[], Meld[]] = [[], [], [], []]
@@ -78,8 +81,8 @@ function viewOf(partial: {
     doras: [],
     wallCount: 40,
     turn: seat,
-    phase: 'playing',
-    claimable: null,
+    phase: partial.phase ?? 'playing',
+    claimable: partial.claimable ?? null,
     mustDiscard: partial.mustDiscard ?? false,
     win: null,
   }
@@ -263,6 +266,302 @@ describe('purity and determinism', () => {
     const offered = discardsOf(view)
     const chosen = discardPolicy(view, offered)
     const cloned = discardPolicy(
+      structuredClone(view) as SeatView,
+      offered.map((a) => ({ ...a }) as HandAction),
+    )
+    expect(cloned).toEqual(chosen)
+  })
+})
+
+// ---------------------------------------------------------------------------------
+// The call branch: claim windows and houtei.
+
+/** Post-call shanten, test-side: the remainder plus the claim folded as a meld — the policy scorer's oracle twin. */
+function afterClaim(
+  view: SeatView,
+  uses: readonly TileId[],
+  meld: Meld,
+): number {
+  return shanten(
+    view.hand.filter((t) => !uses.includes(t)).map(kindOf),
+    [...view.melds[view.seat], meld],
+  )
+}
+
+describe('callPolicy — ron arm', () => {
+  it('returns an own window ron unconditionally, even offered after a takeable claim', () => {
+    const take = tileSource()
+    const [w1, w2, windowTile] = take('555z')
+    const view = viewOf({
+      seat: 2,
+      hand: [...take('234m567p2489s1z'), w1, w2],
+      claimable: { seat: 0, tile: windowTile },
+    })
+    const ron: HandAction = { type: 'ron', seat: 2, tile: windowTile }
+    const offered: HandAction[] = [
+      { type: 'draw', seat: 1 },
+      { type: 'pon', seat: 2, tile: windowTile, uses: [w1, w2] },
+      ron,
+    ]
+    expect(callPolicy(view, offered)).toBe(ron)
+  })
+
+  it('returns the houtei ron out of ryuukyoku (the rons-only offered set)', () => {
+    const take = tileSource()
+    const view = viewOf({ seat: 1, hand: take('123m456p789s1122z'), phase: 'ryuukyoku' })
+    const ron: HandAction = { type: 'ron', seat: 1, tile: take('2z')[0] }
+    expect(callPolicy(view, [ron])).toBe(ron)
+  })
+
+  it('never takes another seat\'s ron — the own claim logic runs instead', () => {
+    const take = tileSource()
+    const [w1, w2, windowTile] = take('555z')
+    // Pon 5z here fails the strict cut (post === pre, see the declines suite), so the
+    // seat passes: the draw comes back, never seat 3's ron.
+    const view = viewOf({
+      seat: 1,
+      hand: [...take('234m567p2489s1z'), w1, w2],
+      claimable: { seat: 3, tile: windowTile },
+    })
+    const draw: HandAction = { type: 'draw', seat: 0 }
+    const offered: HandAction[] = [
+      draw,
+      { type: 'ron', seat: 3, tile: windowTile },
+      { type: 'pon', seat: 1, tile: windowTile, uses: [w1, w2] },
+    ]
+    expect(callPolicy(view, offered)).toBe(draw)
+  })
+})
+
+describe('callPolicy — accepts', () => {
+  it('takes a yakuhai pon that cuts shanten (the new meld is the anchor)', () => {
+    const take = tileSource()
+    const [h1, h2, windowTile] = take('555z')
+    const view = viewOf({
+      seat: 1,
+      hand: [...take('345m24m567p889s'), h1, h2],
+      claimable: { seat: 3, tile: windowTile },
+    })
+    const pon: HandAction = { type: 'pon', seat: 1, tile: windowTile, uses: [h1, h2] }
+    const offered: HandAction[] = [{ type: 'draw', seat: 0 }, pon]
+    expect(callPolicy(view, offered)).toBe(pon)
+    // The cut, re-derived: 1-shanten hand reaches tenpai through the claim.
+    expect(shanten(view.hand.map(kindOf), [])).toBe(1)
+    expect(
+      afterClaim(view, [h1, h2], { type: 'pon', claimed: windowTile, from: 3, own: [h1, h2] }),
+    ).toBe(0)
+  })
+
+  it('takes a kuitan chi on an all-simples hand (the tanyao anchor)', () => {
+    const take = tileSource()
+    const [u1, u2] = [take('3s')[0], take('5s')[0]]
+    const windowTile = take('4s')[0]
+    const view = viewOf({
+      seat: 1,
+      hand: [...take('2346m44m678p88s'), u1, u2],
+      claimable: { seat: 0, tile: windowTile },
+    })
+    const chi: HandAction = { type: 'chi', seat: 1, tile: windowTile, uses: [u1, u2] }
+    const offered: HandAction[] = [{ type: 'draw', seat: 1 }, chi]
+    expect(callPolicy(view, offered)).toBe(chi)
+    expect(shanten(view.hand.map(kindOf), [])).toBe(1)
+    expect(
+      afterClaim(view, [u1, u2], { type: 'chi', claimed: windowTile, from: 0, own: [u1, u2] }),
+    ).toBe(0)
+  })
+
+  it('takes a second call when an existing yakuhai pon already anchors the open hand', () => {
+    const take = tileSource()
+    const [c, o1, o2] = take('666z')
+    const hatsuPon: Meld = { type: 'pon', claimed: c, from: 3, own: [o1, o2] }
+    const [u1, u2] = [take('4p')[0], take('5p')[0]]
+    const windowTile = take('6p')[0]
+    // 1z in the remainder and a non-simple meld: the tanyao arm is dead both ways —
+    // only the existing hatsu pon anchors this accept.
+    const view = viewOf({
+      seat: 1,
+      hand: [...take('123m78p99s1z'), u1, u2],
+      melds: [hatsuPon],
+      claimable: { seat: 0, tile: windowTile },
+    })
+    const chi: HandAction = { type: 'chi', seat: 1, tile: windowTile, uses: [u1, u2] }
+    const offered: HandAction[] = [{ type: 'draw', seat: 1 }, chi]
+    expect(callPolicy(view, offered)).toBe(chi)
+    expect(shanten(view.hand.map(kindOf), [hatsuPon])).toBe(1)
+    expect(
+      afterClaim(view, [u1, u2], { type: 'chi', claimed: windowTile, from: 0, own: [u1, u2] }),
+    ).toBe(0)
+  })
+})
+
+describe('callPolicy — declines (the pass is the offered draw)', () => {
+  it('passes a shanten-cutting chi that would strand an open yakuless hand — the AC case', () => {
+    const take = tileSource()
+    const [u1, u2] = [take('8m')[0], take('9m')[0]]
+    const windowTile = take('7m')[0]
+    // No value pair anywhere, and the 789m meld holds a 9m — both anchor arms fail,
+    // so the cut (1-shanten → tenpai, re-derived below) is not enough.
+    const view = viewOf({
+      seat: 1,
+      hand: [...take('234p67p345s99s1z'), u1, u2],
+      claimable: { seat: 0, tile: windowTile },
+    })
+    const draw: HandAction = { type: 'draw', seat: 1 }
+    const chi: HandAction = { type: 'chi', seat: 1, tile: windowTile, uses: [u1, u2] }
+    expect(callPolicy(view, [draw, chi])).toBe(draw)
+    expect(shanten(view.hand.map(kindOf), [])).toBe(1)
+    expect(
+      afterClaim(view, [u1, u2], { type: 'chi', claimed: windowTile, from: 0, own: [u1, u2] }),
+    ).toBe(0)
+  })
+
+  it('passes a pon that does not lower shanten, even with the yaku secured', () => {
+    const take = tileSource()
+    const [h1, h2, windowTile] = take('555z')
+    // The 5z pair serves as the head; melding it just moves the pair out and leaves
+    // the hand headless — post equals pre, and the haku anchor cannot buy the claim.
+    const view = viewOf({
+      seat: 1,
+      hand: [...take('234m567p2489s1z'), h1, h2],
+      claimable: { seat: 3, tile: windowTile },
+    })
+    const draw: HandAction = { type: 'draw', seat: 0 }
+    const pon: HandAction = { type: 'pon', seat: 1, tile: windowTile, uses: [h1, h2] }
+    expect(callPolicy(view, [draw, pon])).toBe(draw)
+    const pre = shanten(view.hand.map(kindOf), [])
+    expect(
+      afterClaim(view, [h1, h2], { type: 'pon', claimed: windowTile, from: 3, own: [h1, h2] }),
+    ).toBe(pre)
+  })
+
+  it('never takes a daiminkan — the cut-rule theorem, even with a yakuhai anchor', () => {
+    const take = tileSource()
+    const [k1, k2, k3, windowTile] = take('5555z')
+    // The concealed 555z already counts as a set, so the kan trades it for the meld
+    // discount: post === pre, structurally — the anchor (a haku kan!) never matters.
+    const view = viewOf({
+      seat: 1,
+      hand: [...take('234m567p24s89s'), k1, k2, k3],
+      claimable: { seat: 3, tile: windowTile },
+    })
+    const draw: HandAction = { type: 'draw', seat: 0 }
+    const kan: HandAction = { type: 'daiminkan', seat: 1, tile: windowTile, uses: [k1, k2, k3] }
+    expect(callPolicy(view, [draw, kan])).toBe(draw)
+    const pre = shanten(view.hand.map(kindOf), [])
+    expect(
+      afterClaim(view, [k1, k2, k3], {
+        type: 'daiminkan',
+        claimed: windowTile,
+        from: 3,
+        own: [k1, k2, k3],
+      }),
+    ).toBe(pre)
+  })
+})
+
+describe('callPolicy — tie-break: earliest offered', () => {
+  it('takes the pon over an equally-cutting chi — claim precedence from the frozen order', () => {
+    const take = tileSource()
+    const [p1, p2] = take('55p')
+    const [c1, c2] = [take('4p')[0], take('6p')[0]]
+    const windowTile = take('5p')[0]
+    const view = viewOf({
+      seat: 1,
+      hand: [...take('234m678s88m2m'), p1, p2, c1, c2],
+      claimable: { seat: 0, tile: windowTile },
+    })
+    const pon: HandAction = { type: 'pon', seat: 1, tile: windowTile, uses: [p1, p2] }
+    const chi: HandAction = { type: 'chi', seat: 1, tile: windowTile, uses: [c1, c2] }
+    // Both cut 1 → 0 and both anchor through kuitan; the offered order decides.
+    expect(callPolicy(view, [{ type: 'draw', seat: 1 }, pon, chi])).toBe(pon)
+    expect(
+      afterClaim(view, [p1, p2], { type: 'pon', claimed: windowTile, from: 0, own: [p1, p2] }),
+    ).toBe(
+      afterClaim(view, [c1, c2], { type: 'chi', claimed: windowTile, from: 0, own: [c1, c2] }),
+    )
+  })
+
+  it('breaks a copy-variant tie by offered order, not copy index', () => {
+    const take = tileSource()
+    const [sFirst, sSecond] = take('33s')
+    const five = take('5s')[0]
+    const windowTile = take('4s')[0]
+    const view = viewOf({
+      seat: 1,
+      hand: [...take('234m678p88m46m'), sFirst, sSecond, five],
+      claimable: { seat: 0, tile: windowTile },
+    })
+    // Curated offered subset: the two 3s-copy variants, deliberately reversed —
+    // equal cut, equal anchor, so the EARLIEST OFFERED (the later copy) must win.
+    const offered: HandAction[] = [
+      { type: 'draw', seat: 1 },
+      { type: 'chi', seat: 1, tile: windowTile, uses: [sSecond, five] },
+      { type: 'chi', seat: 1, tile: windowTile, uses: [sFirst, five] },
+    ]
+    expect(callPolicy(view, offered)).toBe(offered[1])
+  })
+})
+
+describe('callPolicy — contract violations', () => {
+  it('throws RangeError on an own-turn post-draw offered set', () => {
+    const take = tileSource()
+    const view = viewOf({ hand: take('123m456m789m99s5p'), drawn: take('1z')[0] })
+    const offered = discardsOf(view)
+    expect(() => callPolicy(view, offered)).toThrow(RangeError)
+    expect(() => callPolicy(view, offered)).toThrow(/claim windows and houtei/)
+  })
+
+  it('throws RangeError on an empty offered set', () => {
+    const take = tileSource()
+    const view = viewOf({ hand: take('123m456m789m99s5p') })
+    expect(() => callPolicy(view, [])).toThrow(RangeError)
+  })
+
+  it('throws RangeError on a houtei set holding only another seat\'s ron', () => {
+    const take = tileSource()
+    const view = viewOf({ seat: 2, hand: take('123m456m789m99s5p'), phase: 'ryuukyoku' })
+    const offered: HandAction[] = [{ type: 'ron', seat: 3, tile: take('5p')[0] }]
+    expect(() => callPolicy(view, offered)).toThrow(RangeError)
+  })
+})
+
+describe('callPolicy — purity and determinism', () => {
+  it('returns the identical element on repeated calls and never mutates its inputs', () => {
+    const take = tileSource()
+    const [h1, h2, windowTile] = take('555z')
+    const view = viewOf({
+      seat: 1,
+      hand: [...take('345m24m567p889s'), h1, h2],
+      claimable: { seat: 3, tile: windowTile },
+    })
+    const offered: HandAction[] = [
+      { type: 'draw', seat: 0 },
+      { type: 'pon', seat: 1, tile: windowTile, uses: [h1, h2] },
+    ]
+    const viewSnapshot = JSON.stringify(view)
+    const offeredSnapshot = JSON.stringify(offered)
+    const first = callPolicy(view, offered)
+    const second = callPolicy(view, offered)
+    expect(second).toBe(first)
+    expect(offered).toContain(first)
+    expect(JSON.stringify(view)).toBe(viewSnapshot)
+    expect(JSON.stringify(offered)).toBe(offeredSnapshot)
+  })
+
+  it('returns a structurally equal action from structurally equal inputs', () => {
+    const take = tileSource()
+    const [h1, h2, windowTile] = take('555z')
+    const view = viewOf({
+      seat: 1,
+      hand: [...take('345m24m567p889s'), h1, h2],
+      claimable: { seat: 3, tile: windowTile },
+    })
+    const offered: HandAction[] = [
+      { type: 'draw', seat: 0 },
+      { type: 'pon', seat: 1, tile: windowTile, uses: [h1, h2] },
+    ]
+    const chosen = callPolicy(view, offered)
+    const cloned = callPolicy(
       structuredClone(view) as SeatView,
       offered.map((a) => ({ ...a }) as HandAction),
     )
