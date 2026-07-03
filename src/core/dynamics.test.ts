@@ -6,12 +6,14 @@
 // every seat's hand carved by calls. Because the generator drives THROUGH the code
 // under test, properties here assert only self-evident invariants — tile conservation,
 // double-fold determinism, structural termination, throw-on-mutation — never derived
-// values (those stay wall-anchored in record.test.ts). Two trajectory sources: fc
-// arbitraries sampling the FULL offered set uniformly by index, and a deterministic
+// values (those stay wall-anchored in record.test.ts). Three trajectory sources: fc
+// arbitraries sampling the FULL offered set uniformly by index, a deterministic
 // greedy-call corpus (kans first, then any call) whose coverage of every call form is
-// asserted — call density is a pinned fact, never an fc statistic. The generators are
-// test-local by design: bots (the future runtime consumer of random play) are a later
-// epic with their own shape.
+// asserted — call density is a pinned fact, never an fc statistic — and a win-eager
+// carrier corpus (T-005-02-04) whose agari ends are pinned the same way, so the
+// suite's win-state assertions can never go vacuous. The generators are test-local
+// by design: bots (the future runtime consumer of random play) are a later epic
+// with their own shape.
 
 import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
@@ -150,6 +152,49 @@ function playGreedy(seed: number): HandRecord {
  */
 const GREEDY_CORPUS_SEEDS: readonly number[] = Array.from({ length: 100 }, (_, i) => i)
 const greedyCorpus: readonly HandRecord[] = GREEDY_CORPUS_SEEDS.map((seed) => playGreedy(seed))
+
+/**
+ * The win-eager driver — playGreedy's mirror image: at every point take a win if
+ * one is offered (the rng picks among simultaneous rons — a legal recorder's
+ * choice under the multiple-ron convention), else sample the FULL offered set
+ * uniformly by index with core's own seeded rng. Where playGreedy filters wins
+ * OUT to protect its call coverage, this driver hunts them: random claim churn is
+ * what creates win opportunities (static tsumogiri hands measured ZERO wins in
+ * 300 seeds), and eagerness converts every offered win into an agari end.
+ * Terminates like its sibling: a houtei-offering ryuukyoku gets its ron taken, a
+ * houtei-less ryuukyoku and an agari offer nothing — every end empties the
+ * offered set, and the hard bound converts a non-terminating loop into a throw.
+ */
+function playWinEager(seed: number): HandRecord {
+  const rng = createRng(seed)
+  const actions: HandAction[] = []
+  for (;;) {
+    const legal = legalActions(foldRecord({ seed, actions }))
+    if (legal.length === 0) return { seed, actions }
+    const wins = legal.filter(isWin)
+    const pool = wins.length > 0 ? wins : legal
+    actions.push(pool[nextInt(rng, pool.length)])
+    if (actions.length > ACTION_BOUND) {
+      throw new Error(
+        `playWinEager exceeded ${ACTION_BOUND} actions — the turn loop is not terminating`,
+      )
+    }
+  }
+}
+
+/**
+ * The win carriers: every seed in the contiguous scan range 0..999 whose
+ * win-eager game ends in agari — mined by this ticket's scratchpad scan (the
+ * frozen-anchor convention: never regenerate). Eight carriers per thousand IS the
+ * share of random-legal games that reach a win at all; 876 and 950 end in tsumo
+ * (both tanyao), the other six in window rons (yakuhai and tanyao wins, winners
+ * across seats 0/1/2, ends from action 21 to 161 — several mid-wall). A carrier
+ * stranded in ryuukyoku by a trajectory-shifting engine change is the coverage
+ * test below failing AS DESIGNED — re-mine with the scratchpad scan rather than
+ * hand-patching seeds.
+ */
+const WIN_CARRIER_SEEDS: readonly number[] = [100, 277, 360, 626, 731, 834, 876, 950]
+const winCorpus: readonly HandRecord[] = WIN_CARRIER_SEEDS.map((seed) => playWinEager(seed))
 
 /**
  * The six-zone flatten of a state — hands, melds' own tiles, ponds, the held-apart
@@ -571,6 +616,78 @@ describe('mutated sequences throw', () => {
       ),
       { numRuns: 60 }, // every run plays a whole game through per-action refolds
     )
+  })
+})
+
+describe('wins over random play', () => {
+  // The epic's rigor loop closed (T-005-02-04): the suite's invariants exhibited
+  // on trajectories that actually END IN WINS. All facts here are deterministic
+  // corpus loops over the frozen carriers — pinned, never fc statistics.
+
+  it('every carrier ends in agari, both end forms occur, and the end identities hold', () => {
+    const ends = new Set<string>()
+    for (const record of winCorpus) {
+      const state = foldRecord(record)
+      expect(state.phase).toBe('agari')
+      expect(state.win).not.toBeNull()
+      ends.add(state.win!.by)
+      expectEndIdentities(record, state)
+    }
+    // The corpus's reason to exist: driven wins of BOTH forms are a pinned fact —
+    // a regression that stops offering wins strands a carrier in ryuukyoku here.
+    for (const form of ['tsumo', 'ron']) {
+      expect(ends.has(form), `the carrier corpus reached no ${form} end`).toBe(true)
+    }
+  })
+
+  it('the 136-tile partition holds at every prefix of every won game, through the ended state', () => {
+    // The winning tile never changes zone (a tsumo's stays in `drawn`, a ron's
+    // stays counted in the discarder's pond) — so the same six-zone flatten that
+    // covers playing states must read 136 distinct ids off the won state too.
+    for (const record of winCorpus) expectConserved(record)
+  })
+
+  it('refolding a won record reproduces the identical winner, tile, and yaku', () => {
+    // Nothing about the win is in the log — winner, tile, and yaku are re-derived
+    // on every fold — which is exactly what makes this a property and not a
+    // tautology: replay IS re-derivation, and it must land on the same win.
+    for (const { seed, actions } of winCorpus) {
+      const first = foldRecord({ seed, actions })
+      const second = foldRecord({ seed, actions })
+      expect(first.win).not.toBeNull()
+      expect(second.win).toEqual(first.win)
+      expect(second).toEqual(first)
+    }
+  })
+
+  it('after a win nothing is offered and every action form throws — ron included', () => {
+    // Two-sided quiescence: the offered set is empty, and the fold rejects every
+    // form appended past the win — including ron, pinning that the ended-phase
+    // carve-out (ron out of ryuukyoku, houtei) never extends to agari, and that a
+    // second ron after a win is the multiple-ron convention's documented throw.
+    for (const record of winCorpus) {
+      const state = foldRecord(record)
+      expect(legalActions(state)).toEqual([])
+      const tile = state.win!.tile
+      const uses = [0, 1, 2, 3] as const
+      for (let s = 0; s < SEAT_COUNT; s++) {
+        const seat = s as Seat
+        const menu: HandAction[] = [
+          { type: 'draw', seat },
+          { type: 'discard', seat, tile },
+          { type: 'chi', seat, tile, uses: [uses[0], uses[1]] },
+          { type: 'pon', seat, tile, uses: [uses[0], uses[1]] },
+          { type: 'daiminkan', seat, tile, uses: [uses[0], uses[1], uses[2]] },
+          { type: 'ankan', seat, uses: [uses[0], uses[1], uses[2], uses[3]] },
+          { type: 'shouminkan', seat, tile },
+          { type: 'tsumo', seat },
+          { type: 'ron', seat, tile },
+        ]
+        for (const mutant of menu) {
+          assertMutantThrows(record.seed, record.actions, mutant, [])
+        }
+      }
+    }
   })
 })
 
