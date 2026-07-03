@@ -50,6 +50,10 @@
 // No honba, no riichi sticks: neither exists in TableState yet (no match/round
 // structure, no riichi declaration in the action vocabulary — han.ts's own
 // header), so this prices exactly one hand's base settlement.
+//
+// baseOf/roundUp100/ronDeltas/tsumoDeltas are exported alongside settlementOf: pure
+// arithmetic over (han, fu) / (base, seats), the tested seam T-008-01-04's grid suite
+// calls directly rather than reconstructing a TableState per han/fu cell.
 
 import type { Meld, TableState } from './record'
 import type { Seat } from './deal'
@@ -88,7 +92,7 @@ function windKindOf(seat: Seat): WindKind {
 }
 
 /** Standard 100-point rounding: every payment rounds up to the next 100. */
-function roundUp100(points: number): number {
+export function roundUp100(points: number): number {
   return Math.ceil(points / 100) * 100
 }
 
@@ -132,7 +136,7 @@ function winOf(state: TableState): Win {
  * e.g. 4han30fu's 1920 — up to a flat mangan; that rounding is the kiriage
  * convention this module deliberately does not apply).
  */
-function baseOf(han: number, fu: number): number {
+export function baseOf(han: number, fu: number): number {
   if (han >= 13) return YAKUMAN_BASE * Math.floor(han / 13)
   if (han >= 11) return SANBAIMAN_BASE
   if (han >= 8) return BAIMAN_BASE
@@ -188,7 +192,7 @@ function bestBaseOf(win: Win, doraKinds: readonly TileKind[]): number {
 }
 
 /** Ron: the discarder alone pays; every other seat is untouched. */
-function ronDeltas(base: number, winner: Seat, discarder: Seat): SeatDeltas {
+export function ronDeltas(base: number, winner: Seat, discarder: Seat): SeatDeltas {
   const payment = roundUp100(base * (winner === DEALER_SEAT ? 6 : 4))
   const deltas: [number, number, number, number] = [0, 0, 0, 0]
   deltas[winner] += payment
@@ -197,7 +201,7 @@ function ronDeltas(base: number, winner: Seat, discarder: Seat): SeatDeltas {
 }
 
 /** Tsumo: every other seat pays — dealer rate from all three, or the split rate. */
-function tsumoDeltas(base: number, winner: Seat): SeatDeltas {
+export function tsumoDeltas(base: number, winner: Seat): SeatDeltas {
   const deltas: [number, number, number, number] = [0, 0, 0, 0]
   const dealerPays = roundUp100(base * 2)
   const nonDealerPays = roundUp100(base * 1)
