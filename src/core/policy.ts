@@ -57,6 +57,7 @@ import type { HandAction, Meld } from './record'
 import type { SeatView } from './seatview'
 import { isSimple, kindOf, rankOf, type TileId, type TileKind } from './tiles'
 import { shanten } from './shanten'
+import { waits } from './waits'
 import type { WindKind } from './yaku'
 
 /** The rank the tie-break measures distance from — the middle of a 1-9 suit. */
@@ -88,6 +89,24 @@ function shantenAfterDiscard(
     tiles.filter((t) => t !== tile).map(kindOf),
     melds,
   )
+}
+
+/**
+ * True when discarding `tile` from `pool` would leave a wait that can never complete —
+ * every kind the resulting 13-tile hand could win on is already fully visible to the hand
+ * itself (its own concealed tiles plus its own melds), so ron and tsumo are both
+ * structurally impossible (waits.ts's own exhaustion convention — a direct call, not a
+ * re-derivation). Distinct from furiten (a wait sitting in the seat's own pond): furiten
+ * still wins by tsumo and is a real, if conservative, strategic choice; a dead wait wins
+ * by nothing, ever.
+ */
+function isDeadWait(
+  pool: readonly TileId[],
+  melds: SeatView['melds'][number],
+  tile: TileId,
+): boolean {
+  const remainder = pool.filter((t) => t !== tile).map(kindOf)
+  return waits(remainder, melds).length === 0
 }
 
 /**
