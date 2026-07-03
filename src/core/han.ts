@@ -30,7 +30,7 @@ function isMenzen(melds: readonly Meld[]): boolean {
  * fully closed hand (menzen-tsumo, pinfu, iipeikou, chiitoitsu, ryanpeikou)
  * never reach hanOf with an open `melds` — their `open` column carries the
  * same value as `closed` rather than an unreachable sentinel, since hanOf has
- * no way (and no need) to distinguish "impossible" from "open value" here.
+ * no way (and no need) to tell "impossible" apart from a real open value here.
  */
 const YAKU_HAN: Readonly<Record<YakuName, { closed: number; open: number }>> = {
   'menzen-tsumo': { closed: 1, open: 1 },
