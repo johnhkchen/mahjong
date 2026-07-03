@@ -586,9 +586,157 @@ describe('illegal actions throw instead of folding silently', () => {
   it('unknown action type from untyped JS folds loudly, never silently', () => {
     // The cast simulates a corrupt (or ahead-of-this-engine) record arriving from
     // storage — the old empty-vocabulary guard's spirit, kept under the real step.
-    const corrupt = { type: 'riichi', seat: 0 } as unknown as HandAction
+    // ('riichi' itself was this fixture's example until T-009-01-01 made it real —
+    // 'kita' picks the next still-unimplemented mahjong mechanic instead.)
+    const corrupt = { type: 'kita', seat: 0 } as unknown as HandAction
     expectThrows([], corrupt, 'unknown action type')
     expectThrows(oneTurn, corrupt, 'unknown action type')
+  })
+})
+
+describe('riichi declaration folds', () => {
+  // Mined fixture (scratchpad scan over seed 100's tsumogiri prefixes, cross-checked
+  // against shanten directly): East's freshly dealt 13-tile hand plus its first draw
+  // (69, 9p) is [128,131,68,55,134,10,46,63,61,8,47,135,125,69] (kinds 6z,6z,9p,5p,
+  // 7z,3m,3p,7p,7p,3m,3p,7z,5z,9p) — discarding either 55 (5p) or 125 (5z) leaves the
+  // 13-tile hand at tenpai (shanten 0); every other tile leaves shanten 1. Never
+  // regenerate.
+  const RIICHI_SEED = 100
+  const riichiPrefix: readonly HandAction[] = [{ type: 'draw', seat: 0 }]
+  const RIICHI: HandAction = { type: 'riichi', seat: 0, tile: 55 }
+
+  it('folds the discard, locks the seat, and moves the stick into the pot', () => {
+    const state = foldRecord({ seed: RIICHI_SEED, actions: [...riichiPrefix, RIICHI] })
+    expect(state.riichi).toEqual([true, false, false, false])
+    expect(state.pot).toBe(1000)
+    expect(state.ponds[0]).toEqual([55])
+    expect(state.hands[0]).not.toContain(55)
+    expect(state.hands[0]).toContain(69) // the drawn tile joined the hand (tedashi)
+    expect(state.turn).toBe(1)
+    expect(state.claimable).toEqual({ seat: 0, tile: 55 })
+  })
+
+  it('an incoming carried pot (RiichiContext.potIn) is preserved and added to', () => {
+    const state = foldRecord(
+      { seed: RIICHI_SEED, actions: [...riichiPrefix, RIICHI] },
+      { scoresIn: [25000, 25000, 25000, 25000], potIn: 2000 },
+    )
+    expect(state.pot).toBe(3000)
+  })
+
+  it('context defaulting: an omitted context is 25000 each and an empty pot', () => {
+    const state = foldRecord({ seed: RIICHI_SEED, actions: riichiPrefix })
+    expect(state.scoresIn).toEqual([25000, 25000, 25000, 25000])
+    expect(state.pot).toBe(0)
+  })
+
+  it('forced tsumogiri: a locked seat’s later tedashi throws; its drawn-tile discard folds', () => {
+    const live = dealtLive(RIICHI_SEED)
+    const actions: HandAction[] = [
+      ...riichiPrefix,
+      RIICHI,
+      { type: 'draw', seat: 1 },
+      { type: 'discard', seat: 1, tile: live[1] },
+      { type: 'draw', seat: 2 },
+      { type: 'discard', seat: 2, tile: live[2] },
+      { type: 'draw', seat: 3 },
+      { type: 'discard', seat: 3, tile: live[3] },
+      { type: 'draw', seat: 0 },
+    ]
+    const state = foldRecord({ seed: RIICHI_SEED, actions })
+    expect(state.drawn).toBe(live[4])
+    const handTile = state.hands[0][0]
+    expect(() =>
+      foldRecord({
+        seed: RIICHI_SEED,
+        actions: [...actions, { type: 'discard', seat: 0, tile: handTile }],
+      }),
+    ).toThrow(/riichi and must discard its drawn tile/)
+    const tsumogiri = foldRecord({
+      seed: RIICHI_SEED,
+      actions: [...actions, { type: 'discard', seat: 0, tile: live[4] }],
+    })
+    expect(tsumogiri.ponds[0]).toEqual([55, live[4]])
+  })
+
+  it('already-in-riichi: a second declaration for a locked seat throws', () => {
+    const live = dealtLive(RIICHI_SEED)
+    const actions: HandAction[] = [
+      ...riichiPrefix,
+      RIICHI,
+      { type: 'draw', seat: 1 },
+      { type: 'discard', seat: 1, tile: live[1] },
+      { type: 'draw', seat: 2 },
+      { type: 'discard', seat: 2, tile: live[2] },
+      { type: 'draw', seat: 3 },
+      { type: 'discard', seat: 3, tile: live[3] },
+      { type: 'draw', seat: 0 },
+    ]
+    expect(() =>
+      foldRecord({
+        seed: RIICHI_SEED,
+        actions: [...actions, { type: 'riichi', seat: 0, tile: live[4] }],
+      }),
+    ).toThrow(/already in riichi/)
+  })
+
+  it('open hand: riichi on a seat holding a non-ankan meld throws', () => {
+    // Continues seed 1's chi fixture (chi/pon claims fold, below) to South's own
+    // next draw, so the decision point is an ordinary own-turn discard, never a
+    // claim discard — mined by folding the chi forward to South's next 'draw'.
+    const chiActions: HandAction[] = [
+      { type: 'draw', seat: 0 },
+      { type: 'discard', seat: 0, tile: 100 },
+      { type: 'chi', seat: 1, tile: 100, uses: [98, 106] },
+      { type: 'discard', seat: 1, tile: 42 },
+      { type: 'draw', seat: 2 },
+      { type: 'discard', seat: 2, tile: 60 },
+      { type: 'draw', seat: 3 },
+      { type: 'discard', seat: 3, tile: 14 },
+      { type: 'draw', seat: 0 },
+      { type: 'discard', seat: 0, tile: 66 },
+      { type: 'draw', seat: 1 },
+    ]
+    const state = foldRecord({ seed: 1, actions: chiActions })
+    expect(state.turn).toBe(1)
+    expect(state.drawn).toBe(20)
+    expect(state.melds[1]).toEqual([{ type: 'chi', claimed: 100, from: 0, own: [98, 106] }])
+    expect(() =>
+      foldRecord({ seed: 1, actions: [...chiActions, { type: 'riichi', seat: 1, tile: 20 }] }),
+    ).toThrow(/open hand/)
+  })
+
+  it('noten: declaring on a tile that does not leave the hand at tenpai throws', () => {
+    expect(() =>
+      foldRecord({
+        seed: RIICHI_SEED,
+        actions: [...riichiPrefix, { type: 'riichi', seat: 0, tile: 128 }],
+      }),
+    ).toThrow(/does not leave seat 0's hand at tenpai/)
+  })
+
+  it('fewer than 1000 points: the score gate throws', () => {
+    expect(() =>
+      foldRecord(
+        { seed: RIICHI_SEED, actions: [...riichiPrefix, RIICHI] },
+        { scoresIn: [500, 25000, 25000, 25000], potIn: 0 },
+      ),
+    ).toThrow(/fewer than the 1000-point stick/)
+  })
+
+  it('no draws left: a riichi attempt on the wall-emptying draw throws', () => {
+    const record = tsumogiriRecord(RIICHI_SEED, FULL_TURNS - 1) // 69 turns, 1 live tile left
+    const before = foldRecord(record)
+    expect(before.live.length).toBe(1)
+    const actions = [...record.actions, { type: 'draw', seat: before.turn } as HandAction]
+    const dangling = foldRecord({ seed: RIICHI_SEED, actions })
+    expect(dangling.live.length).toBe(0)
+    expect(() =>
+      foldRecord({
+        seed: RIICHI_SEED,
+        actions: [...actions, { type: 'riichi', seat: dangling.turn, tile: dangling.drawn! }],
+      }),
+    ).toThrow(/no draws remaining/)
   })
 })
 

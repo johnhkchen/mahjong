@@ -231,6 +231,7 @@ function countTypes(actions: readonly HandAction[]): Record<HandAction['type'], 
   const counts = {
     draw: 0,
     discard: 0,
+    riichi: 0,
     chi: 0,
     pon: 0,
     daiminkan: 0,
@@ -430,6 +431,8 @@ function withSeat(action: HandAction, seat: Seat): HandAction {
       return { type: 'draw', seat }
     case 'discard':
       return { type: 'discard', seat, tile: action.tile }
+    case 'riichi':
+      return { type: 'riichi', seat, tile: action.tile }
     case 'chi':
       return { type: 'chi', seat, tile: action.tile, uses: action.uses }
     case 'pon':

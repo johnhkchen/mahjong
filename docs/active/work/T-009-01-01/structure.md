@@ -31,6 +31,16 @@ changes, Seat-indexing note).
   those three already use.
 - `RIICHI_STICK` reference (defined once, exported — see above; not re-declared here).
 
+**Amendment (found during Implement, not anticipated in Design/Structure's first pass)**: the
+ordinary `discard` case in `applyAction` ALSO needs its own new guard —
+`if (state.riichi[action.seat] && action.tile !== state.drawn) throw ...` — placed after the
+turn check and before calling `performDiscard`. Design's Decision 4 only covered suppressing
+`legalActions`' OFFERS for a locked seat; it did not name a fold-time guard rejecting a
+tedashi discard folded directly (bypassing legality) from an already-locked seat. Without this,
+`record.ts` alone would silently ACCEPT an illegal post-riichi tedashi if handed one directly —
+violating "legal.ts's suppression is not record.ts's only line of defense" (the same
+independent-restatement discipline every other rule in this fold already follows).
+
 **Refactor**: extract the `discard` case body of `applyAction` (current lines ~814-863) into
 a private function, e.g.:
 

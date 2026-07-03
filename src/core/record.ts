@@ -10,6 +10,7 @@ import { doraKindOf } from './dora'
 import { dealHands, SEAT_COUNT, type Seat } from './deal'
 import type { WindKind } from './yaku'
 import { yakuOf, type WinYakuName } from './yakuman'
+import { shanten } from './shanten'
 
 /**
  * The element type of the ordered action log — the engine's action vocabulary.
@@ -28,6 +29,17 @@ import { yakuOf, type WinYakuName } from './yakuman'
  *   at fold time (the discarded tile equals the one just drawn). Id RANGE validation
  *   stays at the future log-parser boundary (the TileId rule in tiles.ts); the fold
  *   validates semantics — the tile must be in the acting seat's hand or just drawn.
+ * - `riichi` (T-009-01-01) is one atomic declare-and-discard, `tile` meaning exactly
+ *   what `discard.tile` means (physical id, tsumogiri derived at fold time) — real
+ *   riichi is one motion, turning the discard sideways, so there is no separate
+ *   "declare" entry and no gap between declaring and discarding for another action
+ *   to sneak into. Folding it locks the seat (TableState.riichi) and moves
+ *   RIICHI_STICK into the pot (TableState.pot) after validating: the seat is not
+ *   already locked, its hand is closed, its starting score (RiichiContext.scoresIn)
+ *   is at least RIICHI_STICK, the live wall is not already exhausted, and the
+ *   chosen tile's removal leaves the hand at tenpai. No yaku, han, or ura-dora is
+ *   recorded or derived here — riichi's own yaku family prices the eventual win,
+ *   a separate, dependent ticket (yaku.ts's/han.ts's own headers).
  * - `chi`/`pon` record the claimed `tile` AND the two hand tiles exposed (`uses`, as
  *   physical ids in recorded order). The claimed tile is derivable from the fold's
  *   claim window, so recording it is the seat-tag redundancy again: a claim naming a
@@ -64,6 +76,7 @@ import { yakuOf, type WinYakuName } from './yakuman'
 export type HandAction =
   | { readonly type: 'draw'; readonly seat: Seat }
   | { readonly type: 'discard'; readonly seat: Seat; readonly tile: TileId }
+  | { readonly type: 'riichi'; readonly seat: Seat; readonly tile: TileId }
   | {
       readonly type: 'chi'
       readonly seat: Seat
@@ -662,6 +675,16 @@ function windKindOf(seat: Seat): WindKind {
 }
 
 /**
+ * A hand is closed (menzen) iff its only melds are ankan — calls open it. The
+ * fourth copy of this exact predicate (yaku.ts/han.ts/fu.ts already each restate
+ * it independently); applyRiichi's own closed-hand gate follows the same
+ * established duplication convention rather than importing one of theirs.
+ */
+function isMenzen(melds: readonly Meld[]): boolean {
+  return melds.every((meld) => meld.type === 'ankan')
+}
+
+/**
  * The round wind every fold assembles wins with. Records are single hands — round
  * rotation is match structure the engine does not hold — so the fold fixes East,
  * which is correct for every East-round hand (all of a tonpuusen) and conservative
@@ -854,6 +877,68 @@ function performDiscard(
 }
 
 /**
+ * The riichi step: an atomic declare-and-discard (the vocabulary's own doc-comment).
+ * Guard order, fixed so every illegal riichi is named by exactly one message —
+ * turn, claim-discard owed, drawn present (the same three preconditions every
+ * own-turn form checks first), already-locked, closed hand, starting score, live
+ * wall, tile held-or-drawn, and finally the one guard only the derivation can see:
+ * does removing this tile actually leave the hand at tenpai. On success the shared
+ * discard tail folds exactly like an ordinary discard (performDiscard), then the
+ * seat locks and the stick joins the pot — in that order, so a throw from any
+ * guard above leaves the state completely unmutated (the record.ts "throw loudly
+ * instead of folding silently" convention: no half-declared, half-discarded state).
+ */
+function applyRiichi(
+  state: TableState,
+  action: Extract<HandAction, { type: 'riichi' }>,
+  index: number,
+): void {
+  const { seat, tile } = action
+  if (seat !== state.turn) {
+    throw new RangeError(`action ${index}: riichi by seat ${seat}, but it is seat ${state.turn}'s turn`)
+  }
+  if (state.mustDiscard) {
+    throw new RangeError(
+      `action ${index}: riichi out of sequence — seat ${seat} owes a discard for its claim`,
+    )
+  }
+  if (state.drawn === null) {
+    throw new RangeError(`action ${index}: riichi before seat ${seat} drew`)
+  }
+  if (state.riichi[seat]) {
+    throw new RangeError(`action ${index}: riichi by seat ${seat}, which is already in riichi`)
+  }
+  if (!isMenzen(state.melds[seat])) {
+    throw new RangeError(`action ${index}: riichi by seat ${seat} with an open hand — riichi requires a closed hand`)
+  }
+  if (state.scoresIn[seat] < RIICHI_STICK) {
+    throw new RangeError(
+      `action ${index}: riichi by seat ${seat} with ${state.scoresIn[seat]} points, fewer than the ${RIICHI_STICK}-point stick`,
+    )
+  }
+  if (state.live.length === 0) {
+    throw new RangeError(`action ${index}: riichi by seat ${seat} with no draws remaining in the live wall`)
+  }
+  const hand = state.hands[seat]
+  if (tile !== state.drawn && !hand.includes(tile)) {
+    throw new RangeError(
+      `action ${index}: riichi of tile ${tile}, which seat ${seat} neither holds nor just drew`,
+    )
+  }
+  const remaining = (tile === state.drawn ? hand : [...hand, state.drawn]).filter((t) => t !== tile)
+  if (shanten(remaining.map(kindOf), state.melds[seat]) !== 0) {
+    throw new RangeError(
+      `action ${index}: riichi of tile ${tile}, which does not leave seat ${seat}'s hand at tenpai`,
+    )
+  }
+  performDiscard(state, seat, tile, index, 'riichi')
+  const locked = [...state.riichi] as [boolean, boolean, boolean, boolean]
+  locked[seat] = true
+  state.riichi = locked
+  state.pot += RIICHI_STICK
+}
+
+/**
  * The per-action step: advance the fold-local state by one logged action, mutating it
  * in place (every array in `state` is fresh to this fold, so the mutation is invisible
  * outside foldRecord). The turn cycle it enforces:
@@ -932,7 +1017,19 @@ function applyAction(state: TableState, action: HandAction, index: number): void
           `action ${index}: discard by seat ${action.seat}, but it is seat ${state.turn}'s turn`,
         )
       }
+      // A locked seat (T-009-01-01) is forced tsumogiri forever after: its own
+      // riichi action already folded its ONE tedashi-or-tsumogiri discard, so every
+      // ordinary discard from here on must be exactly the tile it just drew.
+      if (state.riichi[action.seat] && action.tile !== state.drawn) {
+        throw new RangeError(
+          `action ${index}: discard of tile ${action.tile} by seat ${action.seat}, which is in riichi and must discard its drawn tile (tsumogiri only)`,
+        )
+      }
       performDiscard(state, action.seat, action.tile, index, 'discard')
+      return
+    }
+    case 'riichi': {
+      applyRiichi(state, action, index)
       return
     }
     case 'chi':
