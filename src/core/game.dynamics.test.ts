@@ -28,6 +28,7 @@ import { describe, expect, it } from 'vitest'
 import {
   DEAL_SIZE,
   LIVE_WALL_SIZE,
+  RIICHI_STICK,
   SEAT_COUNT,
   callPolicy,
   discardPolicy,
@@ -186,6 +187,29 @@ function expectedSeatWinds(dealer: Player): readonly [WindKind, WindKind, WindKi
 }
 
 /**
+ * The REAL pot a fresh boundary should carry in, restated independently from
+ * settlement.ts's own conservation law (module header) / game.ts's own foldGame carry
+ * rule — never read from foldGame's own branch, same reasoning as nextExpectedDealer
+ * above. Walked hand by hand from a fresh pot of 0, using ONLY each hand's own action log
+ * (riichi declarations, RIICHI_STICK each) and each hand's own ended phase: agari resets
+ * to 0 (the winner's settlement delta already absorbed the whole pot), ryuukyoku carries
+ * the running total forward untouched. Deliberately does NOT read `.pot` off a
+ * `foldRecord` call — a single-hand fold defaults to FRESH_CONTEXT (potIn 0), which is
+ * fine for `.phase` (context-independent: natural hand endings never depend on
+ * scoresIn/potIn) but WRONG for `.pot` once any earlier hand in the same game carried a
+ * pot in — exactly the bug an earlier version of this helper had (see progress.md).
+ */
+function realPotAfter(gameSeed: number, hands: readonly (readonly HandAction[])[]): number {
+  let pot = 0
+  for (let index = 0; index < hands.length; index++) {
+    const phase = foldRecord({ seed: handSeedOf(gameSeed, index), actions: hands[index] }).phase
+    const sticks = hands[index].filter((action) => action.type === 'riichi').length
+    pot = phase === 'agari' ? 0 : pot + sticks * RIICHI_STICK
+  }
+  return pot
+}
+
+/**
  * The suite's core assertion, called once per prefix length for every game built. `hands`
  * is a prefix that is ALL real/ended hands (never a trailing []); `prevDealer` is the
  * PREVIOUSLY-checked prefix's own Player, threaded by the caller starting at 0 for the
@@ -202,8 +226,11 @@ function expectValidBoundary(
   const record: GameRecord = { seed: gameSeed, hands: [...hands, []] }
   const state = foldGame(record)
 
-  // (1) conservation: total points equal 4 * 25000 after every settlement.
-  expect(state.scores.reduce((a, b) => a + b, 0)).toBe(4 * STARTING_SCORE)
+  // (1) conservation: total points plus the carried pot equal 4 * 25000 after every
+  // settlement — settlement.ts's own corrected conservation law (T-009-01-01), not the
+  // pre-riichi "scores alone" sum: a locked seat's stick sits in state.pot, unclaimed,
+  // until an agari absorbs it or a ryuukyoku carries it forward (see realPotAfter).
+  expect(state.scores.reduce((a, b) => a + b, 0) + state.pot).toBe(4 * STARTING_SCORE)
 
   // (2) fold purity, restated per prefix (dynamics.test.ts's "assert at every prefix").
   expect(foldGame(record)).toEqual(state)
@@ -212,6 +239,9 @@ function expectValidBoundary(
   const expectedDealer = nextExpectedDealer(prevDealer, endedState)
   expect(state.dealer).toBe(expectedDealer)
   expect(state.seatWinds).toEqual(expectedSeatWinds(state.dealer))
+
+  // (5) pot carry: a fresh boundary's pot equals the independently-walked real total.
+  expect(state.pot).toBe(realPotAfter(gameSeed, hands))
 
   return state.dealer
 }
@@ -232,6 +262,7 @@ describe('multi-hand dynamics: corpus', () => {
     () => {
       let renchanCount = 0
       let rotationCount = 0
+      let riichiHands = 0
       const finalPhases = new Set<TableState['phase']>()
       for (const gameSeed of GAME_SEEDS) {
         const { hands } = playGame(gameSeed, HANDS_PER_GAME)
@@ -245,14 +276,19 @@ describe('multi-hand dynamics: corpus', () => {
           const nextDealer = expectValidBoundary(gameSeed, prefix, dealer)
           if (nextDealer === dealer) renchanCount += 1
           else rotationCount += 1
+          if (prefix[len - 1].some((action) => action.type === 'riichi')) riichiHands += 1
           dealer = nextDealer
           if (len === hands.length) finalPhases.add(endedState.phase)
         }
       }
       // Non-vacuity, the selfplay.test.ts/dynamics.test.ts precedent restated: a zeroed
-      // tally must widen the corpus, never weaken the check.
+      // tally must widen the corpus, never weaken the check. riichiHands closes
+      // T-009-02-02's own AC clause: bots must actually declare riichi in the sample, not
+      // merely be capable of it (discardPolicy's T-009-02-01 rule already guarantees this
+      // in practice — research.md's probe found 83/120 hands — this assertion locks it in).
       expect(renchanCount).toBeGreaterThan(0)
       expect(rotationCount).toBeGreaterThan(0)
+      expect(riichiHands).toBeGreaterThan(0)
       expect(finalPhases).toContain('agari')
       expect(finalPhases).toContain('ryuukyoku')
     },
