@@ -442,9 +442,13 @@ describe('riichi sticks and the pot', () => {
       pot: 3000,
     }
     const deltas = settlementOf(state)
-    // Base ron [-7700, 7700, 0, 0]; sticks -1000 at seats 1 and 3; the pot
-    // (3000) added to the winner (seat 1).
-    expect(deltas).toEqual([-7700, 7700 - 1000 + 3000, 0, -1000])
+    // T-009-01-02: the winner (seat 1) is ITSELF the riichi[1]=true seat, so
+    // winOf now correctly threads its real riichi status into pricing — the
+    // win gains the 'riichi' yaku, pinfu(1)+tanyao(1)+iipeikou(1)+riichi(1)+
+    // dora(1) = 5han, the flat mangan tier (baseOf's han===5 branch): base
+    // 2000, non-dealer ron pays base*4 = 8000. Sticks -1000 at seats 1 and 3;
+    // the pot (3000) added to the winner (seat 1).
+    expect(deltas).toEqual([-8000, 8000 - 1000 + 3000, 0, -1000])
     // The agari conservation law (module header): a hand's deltas sum to
     // exactly the INCOMING pot (this hand's own sticks cancel against the pot
     // they fed) — never zero once any riichi carries a pot in.
@@ -503,6 +507,170 @@ describe('riichi sticks and the pot', () => {
     const ryuukyokuBreakdown = scoreBreakdownOf(ryuukyoku)
     expect(ryuukyokuBreakdown.deltas).toEqual(settlementOf(ryuukyoku))
     expect(ryuukyokuBreakdown.pot).toBe(1000)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// T-009-01-02: the riichi yaku family + ura-dora priced through settlementOf/
+// scoreBreakdownOf. Reuses the SAME PINFU_HAND_13/PINFU_WINNING_KIND fixture
+// as Fixture 1 (pinfu+tanyao+iipeikou+dora(5p) = 4han/30fu, base 1920, 7700
+// non-dealer ron) — every number below is that same base plus exactly what the
+// riichi family/ura-dora adds, so the delta is attributable, not re-derived
+// from scratch. `doubleRiichi`/`ippatsu`/`uradora` all default to inert
+// (baseState's own defaults) unless a fixture sets them.
+// ---------------------------------------------------------------------------
+describe('the riichi yaku family and ura-dora (T-009-01-02)', () => {
+  it('a plain (non-double) riichi ron: +1 han from riichi pushes 4han to the flat mangan tier', () => {
+    const state: TableState = {
+      ...ronState({
+        hand13: PINFU_HAND_13,
+        winningKind: PINFU_WINNING_KIND,
+        winner: 1,
+        discarder: 0,
+        doras: PINFU_DORA,
+      }),
+      riichi: [false, true, false, false],
+    }
+    const breakdown = scoreBreakdownOf(state)
+    if (breakdown.kind !== 'agari') throw new Error('unreachable')
+    expect(breakdown.yaku.map((line) => line.name)).toEqual(
+      expect.arrayContaining(['pinfu', 'tanyao', 'iipeikou', 'riichi']),
+    )
+    expect(breakdown.yaku.find((line) => line.name === 'riichi')?.han).toBe(1)
+    expect(breakdown.doraHan).toBe(1)
+    expect(breakdown.uraDoraHan).toBe(0)
+    // pinfu(1)+tanyao(1)+iipeikou(1)+riichi(1)+dora(1) = 5han — the flat mangan
+    // tier (baseOf's han===5 branch), base 2000, non-dealer ron pays base*4.
+    expect(breakdown.han).toBe(5)
+    expect(breakdown.limitName).toBe('mangan')
+    // Base ron payment [-8000, 8000, 0, 0], then withRiichiSettlement's own
+    // -1000 for the winner's OWN stick (it declared too — T-009-01-01's
+    // established overlay, unrelated to this ticket): 8000 - 1000 = 7000.
+    expect(settlementOf(state)).toEqual([-8000, 7000, 0, 0])
+  })
+
+  it('a double riichi ron: +2 han from double-riichi, and plain riichi never also fires', () => {
+    const state: TableState = {
+      ...ronState({
+        hand13: PINFU_HAND_13,
+        winningKind: PINFU_WINNING_KIND,
+        winner: 1,
+        discarder: 0,
+        doras: PINFU_DORA,
+      }),
+      riichi: [false, true, false, false],
+      doubleRiichi: [false, true, false, false],
+    }
+    const breakdown = scoreBreakdownOf(state)
+    if (breakdown.kind !== 'agari') throw new Error('unreachable')
+    const names = breakdown.yaku.map((line) => line.name)
+    expect(names).toContain('double-riichi')
+    expect(names).not.toContain('riichi')
+    expect(breakdown.yaku.find((line) => line.name === 'double-riichi')?.han).toBe(2)
+    // pinfu(1)+tanyao(1)+iipeikou(1)+double-riichi(2)+dora(1) = 6han — haneman
+    // (baseOf's han 6-7 branch), base 3000, non-dealer ron pays base*4.
+    expect(breakdown.han).toBe(6)
+    expect(breakdown.limitName).toBe('haneman')
+    // Base ron 12000, minus the winner's own -1000 stick cost (T-009-01-01's
+    // overlay): 12000 - 1000 = 11000.
+    expect(settlementOf(state)).toEqual([-12000, 11000, 0, 0])
+  })
+
+  it('a riichi ippatsu tsumo: riichi + ippatsu stack, same haneman total as double riichi alone', () => {
+    const state: TableState = {
+      ...tsumoState({
+        hand13: PINFU_HAND_13,
+        winningKind: PINFU_WINNING_KIND,
+        winner: 1,
+        doras: PINFU_DORA,
+      }),
+      riichi: [false, true, false, false],
+      ippatsu: [false, true, false, false],
+    }
+    const breakdown = scoreBreakdownOf(state)
+    if (breakdown.kind !== 'agari') throw new Error('unreachable')
+    const names = breakdown.yaku.map((line) => line.name)
+    expect(names).toContain('riichi')
+    expect(names).toContain('ippatsu')
+    expect(names).toContain('menzen-tsumo') // tsumo, closed hand — always fires too
+    // pinfu(1)+tanyao(1)+iipeikou(1)+menzen-tsumo(1)+riichi(1)+ippatsu(1)+
+    // dora(1) = 7han — still haneman (baseOf's han 6-7 branch), base 3000.
+    // Tsumo, non-dealer winner: dealer pays base*2, the other two pay base*1
+    // each — 6000 + 3000 + 3000 = 12000 collected, matching the double-riichi
+    // ron's base total exactly (two different yaku paths to the same +2 han),
+    // then the winner's own -1000 stick cost: 12000 - 1000 = 11000.
+    expect(breakdown.han).toBe(7)
+    expect(breakdown.limitName).toBe('haneman')
+    expect(breakdown.points).toBe(11000)
+  })
+
+  it('ura-dora counts only when the winner is in riichi, priced separately from ordinary dora', () => {
+    // PINFU_HAND_13 holds 6s once ('33p223344m456p67s') — an ura-dora kind of
+    // '6s' therefore counts exactly once, independent of the ordinary dora
+    // (5p, also held once).
+    const riichiState: TableState = {
+      ...ronState({
+        hand13: PINFU_HAND_13,
+        winningKind: PINFU_WINNING_KIND,
+        winner: 1,
+        discarder: 0,
+        doras: PINFU_DORA,
+      }),
+      riichi: [false, true, false, false],
+      uradora: ['6s'],
+    }
+    const riichiBreakdown = scoreBreakdownOf(riichiState)
+    if (riichiBreakdown.kind !== 'agari') throw new Error('unreachable')
+    expect(riichiBreakdown.doraHan).toBe(1)
+    expect(riichiBreakdown.uraDoraHan).toBe(1)
+    // pinfu(1)+tanyao(1)+iipeikou(1)+riichi(1)+dora(1)+uradora(1) = 6han.
+    expect(riichiBreakdown.han).toBe(6)
+
+    // The SAME held tiles and the SAME uradora list, but no riichi at all: the
+    // gate closes — uraDoraHan is 0 regardless of what state.uradora holds,
+    // and doraHan/han fall back to Fixture 1's original 4han/7700 exactly.
+    const noRiichiState: TableState = {
+      ...ronState({
+        hand13: PINFU_HAND_13,
+        winningKind: PINFU_WINNING_KIND,
+        winner: 1,
+        discarder: 0,
+        doras: PINFU_DORA,
+      }),
+      uradora: ['6s'],
+    }
+    const noRiichiBreakdown = scoreBreakdownOf(noRiichiState)
+    if (noRiichiBreakdown.kind !== 'agari') throw new Error('unreachable')
+    expect(noRiichiBreakdown.doraHan).toBe(1)
+    expect(noRiichiBreakdown.uraDoraHan).toBe(0)
+    expect(noRiichiBreakdown.han).toBe(4)
+    expect(settlementOf(noRiichiState)).toEqual([-7700, 7700, 0, 0])
+  })
+
+  it('zero-sum-plus-pot holds with riichi/ippatsu/ura-dora folded into a real payment', () => {
+    // Winner (seat 1) riichi+ippatsu+ura-dora as above (6han/haneman/12000);
+    // seat 3 also riichi'd (a stick, no other effect); pot carries in 1000 from
+    // an earlier ryuukyoku plus this hand's own two sticks: 1000 + 2*1000.
+    const state: TableState = {
+      ...ronState({
+        hand13: PINFU_HAND_13,
+        winningKind: PINFU_WINNING_KIND,
+        winner: 1,
+        discarder: 0,
+        doras: PINFU_DORA,
+      }),
+      riichi: [false, true, false, true],
+      ippatsu: [false, true, false, false],
+      uradora: ['6s'],
+      pot: 3000,
+    }
+    const deltas = settlementOf(state)
+    // Base ron 12000 (haneman, non-dealer winner, non-dealer discarder pays
+    // alone); sticks -1000 at seats 1 and 3; the pot (3000) added to seat 1.
+    expect(deltas).toEqual([-12000, 12000 - 1000 + 3000, 0, -1000])
+    // Conservation (module header): sums to exactly the INCOMING pot (1000),
+    // never zero once any riichi carries a pot in.
+    expect(deltas.reduce((a, b) => a + b, 0)).toBe(1000)
   })
 })
 

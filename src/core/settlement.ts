@@ -73,7 +73,7 @@ import { RIICHI_STICK, type Meld, type TableState } from './record'
 import type { Seat } from './deal'
 import { decomposeAgari } from './agari'
 import { yakuOf, YAKUMAN_NAMES, type Win, type WinYakuName } from './yakuman'
-import { standardYakuOf, type WinContext, type WindKind } from './yaku'
+import { standardYakuOf, type RiichiStatus, type WinContext, type WindKind } from './yaku'
 import { hanOf, doraHanOf } from './han'
 import { fuOf } from './fu'
 import { shanten } from './shanten'
@@ -112,7 +112,14 @@ export type ScoreBreakdown =
       /** The winning reading's own yaku — never state.win.yaku's cross-reading union. */
       readonly yaku: readonly YakuLine[]
       readonly doraHan: number
-      /** Total han: every yaku line's han plus doraHan. */
+      /**
+       * Ura-dora han (T-009-01-02) — 0 unless the winner was in riichi; kept as
+       * its own field, separate from `doraHan`, so a review screen can name the
+       * two distinct pedagogically (a teaching-first game's own reason, design.md
+       * Decision 8 — never folded into one merged number).
+       */
+      readonly uraDoraHan: number
+      /** Total han: every yaku line's han plus doraHan plus uraDoraHan. */
       readonly han: number
       /** Null exactly when limitName is set — fu is not part of a limit hand's line. */
       readonly fu: number | null
@@ -166,6 +173,17 @@ function windKindOf(seat: Seat): WindKind {
   return `${seat + 1}z` as WindKind
 }
 
+/**
+ * `seat`'s riichi status right now, from TableState.riichi/doubleRiichi
+ * (T-009-01-02) — record.ts's/legal.ts's own riichiStatusOf, restated here per
+ * the cross-module duplication convention this file's own DEALER_SEAT/
+ * ROUND_WIND/windKindOf comment already names.
+ */
+function riichiStatusOf(state: TableState, seat: Seat): RiichiStatus {
+  if (!state.riichi[seat]) return 'none'
+  return state.doubleRiichi[seat] ? 'double' : 'riichi'
+}
+
 /** Standard 100-point rounding: every payment rounds up to the next 100. */
 export function roundUp100(points: number): number {
   return Math.ceil(points / 100) * 100
@@ -196,10 +214,8 @@ function winOf(state: TableState): Win {
     lastTile: state.live.length === 0,
     seatWind: windKindOf(winner),
     roundWind: ROUND_WIND,
-    // T-009-01-02: inert placeholder — commit 4 replaces with TableState.riichi/
-    // doubleRiichi/ippatsu-derived values for `winner`.
-    riichi: 'none',
-    ippatsu: false,
+    riichi: riichiStatusOf(state, winner),
+    ippatsu: state.ippatsu[winner],
   }
 }
 
@@ -243,6 +259,8 @@ function hanOfNames(names: readonly WinYakuName[], melds: readonly Meld[], doraH
 interface PricedReading {
   readonly yaku: readonly YakuLine[]
   readonly doraHan: number
+  /** Ura-dora han (T-009-01-02) — 0 for a non-riichi win or a yakuman reading. */
+  readonly uraDoraHan: number
   readonly han: number
   readonly fu: number
   readonly base: number
@@ -260,7 +278,7 @@ function yakuLinesOf(names: readonly WinYakuName[], melds: readonly Meld[]): Yak
  * already required SOME reading to contribute a yaku to yakuOf's union, so at least
  * one candidate always survives the filter.
  */
-function pricedReadingCandidatesOf(win: Win, doraHan: number): PricedReading[] {
+function pricedReadingCandidatesOf(win: Win, doraHan: number, uraDoraHan: number): PricedReading[] {
   const candidates: PricedReading[] = []
   for (const decomposition of decomposeAgari(win.concealed, win.melds)) {
     if (decomposition.form === 'kokushi') continue
@@ -278,8 +296,15 @@ function pricedReadingCandidatesOf(win: Win, doraHan: number): PricedReading[] {
     const names = readingYakuOf(ctx)
     if (names.length === 0) continue
     const fu = fuOf(ctx)
-    const han = hanOfNames(names, win.melds, doraHan)
-    candidates.push({ yaku: yakuLinesOf(names, win.melds), doraHan, han, fu, base: baseOf(han, fu) })
+    const han = hanOfNames(names, win.melds, doraHan + uraDoraHan)
+    candidates.push({
+      yaku: yakuLinesOf(names, win.melds),
+      doraHan,
+      uraDoraHan,
+      han,
+      fu,
+      base: baseOf(han, fu),
+    })
   }
   return candidates
 }
@@ -291,19 +316,38 @@ function pricedReadingCandidatesOf(win: Win, doraHan: number): PricedReading[] {
  * implementation — bestBaseOf below is a thin wrapper over this, so settlementOf and
  * scoreBreakdownOf can never select two different readings for the same win.
  */
-function bestReadingOf(win: Win, doraKinds: readonly TileKind[]): PricedReading {
+function bestReadingOf(
+  win: Win,
+  doraKinds: readonly TileKind[],
+  uraDoraKinds: readonly TileKind[],
+): PricedReading {
   const yaku = yakuOf(win)
   if (yaku.some((name) => YAKUMAN_SET.has(name))) {
     const han = hanOfNames(yaku, win.melds, 0)
-    return { yaku: yakuLinesOf(yaku, win.melds), doraHan: 0, han, fu: 0, base: baseOf(han, 0) }
+    return {
+      yaku: yakuLinesOf(yaku, win.melds),
+      doraHan: 0,
+      uraDoraHan: 0,
+      han,
+      fu: 0,
+      base: baseOf(han, 0),
+    }
   }
-  const candidates = pricedReadingCandidatesOf(win, doraHanOf(win, doraKinds))
+  const candidates = pricedReadingCandidatesOf(
+    win,
+    doraHanOf(win, doraKinds),
+    doraHanOf(win, uraDoraKinds),
+  )
   return candidates.reduce((best, candidate) => (candidate.base > best.base ? candidate : best))
 }
 
 /** The whole win's base points — bestReadingOf's base, kept as its own name for settlementOf's call site. */
-function bestBaseOf(win: Win, doraKinds: readonly TileKind[]): number {
-  return bestReadingOf(win, doraKinds).base
+function bestBaseOf(
+  win: Win,
+  doraKinds: readonly TileKind[],
+  uraDoraKinds: readonly TileKind[],
+): number {
+  return bestReadingOf(win, doraKinds, uraDoraKinds).base
 }
 
 /**
@@ -411,8 +455,11 @@ export function settlementOf(state: TableState): SeatDeltas {
     return withRiichiSettlement(notenBappuOf(tenpaiFlagsOf(state)), state, null)
   }
   const win = winOf(state)
-  const base = bestBaseOf(win, state.doras)
   const ended = state.win!
+  // T-009-01-02: ura-dora only prices a riichi win — an empty list otherwise,
+  // rather than threading a boolean gate an extra layer into bestBaseOf.
+  const uraDoraKinds = state.riichi[ended.winner] ? state.uradora : []
+  const base = bestBaseOf(win, state.doras, uraDoraKinds)
   const payment =
     ended.by === 'ron'
       ? ronDeltas(base, ended.winner, ended.from)
@@ -443,8 +490,9 @@ export function scoreBreakdownOf(state: TableState): ScoreBreakdown {
     return { kind: 'ryuukyoku', tenpai, deltas, scores: seatScoresOf(deltas), pot: state.pot }
   }
   const win = winOf(state)
-  const reading = bestReadingOf(win, state.doras)
   const ended = state.win!
+  const uraDoraKinds = state.riichi[ended.winner] ? state.uradora : []
+  const reading = bestReadingOf(win, state.doras, uraDoraKinds)
   const payment =
     ended.by === 'ron'
       ? ronDeltas(reading.base, ended.winner, ended.from)
@@ -458,6 +506,7 @@ export function scoreBreakdownOf(state: TableState): ScoreBreakdown {
     from: ended.by === 'ron' ? ended.from : null,
     yaku: reading.yaku,
     doraHan: reading.doraHan,
+    uraDoraHan: reading.uraDoraHan,
     han: reading.han,
     fu: limitName === null ? reading.fu : null,
     limitName,

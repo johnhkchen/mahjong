@@ -65,7 +65,17 @@ function ronGates(
   const completes = isAgari([...kinds, kindOf(tile)], melds)
   if (!completes) return { completes, furiten: false, yakuless: false }
   const pondKinds = new Set(state.ponds[seat].map(kindOf))
-  const furiten = waits(kinds, melds).some((kind) => pondKinds.has(kind))
+  // T-009-01-03: basic (self-pond) furiten is recomputed here, independently of
+  // legal.ts's own discardFuriten; tempFuriten/riichiFuriten have exactly ONE
+  // authority (record.ts's fold — see TableState's own doc-comments on why they
+  // cannot be recomputed from a snapshot), so this oracle reads them straight off
+  // the state rather than re-deriving them, and the agreement this test checks is
+  // that legal.ts correctly READS and composes all three, not that it recomputes
+  // the fold-tracked two independently.
+  const furiten =
+    waits(kinds, melds).some((kind) => pondKinds.has(kind)) ||
+    state.tempFuriten[seat] ||
+    state.riichiFuriten[seat]
   const yaku = yakuOf({
     concealed: [...kinds, kindOf(tile)],
     melds,
@@ -272,6 +282,88 @@ describe('the furiten divergence: not offered, still folds', () => {
     const state = foldRecord({ seed: FURITEN_SEED, actions: [...furitenPrefix(), FURITEN_RON] })
     expect(state.phase).toBe('agari')
     expect(state.win).toMatchObject({ by: 'ron', winner: 1, from: 0, tile: 70 })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// T-009-01-03: temporary and riichi furiten — the fold-tracked extensions to the
+// furiten divergence above. TableState.tempFuriten/riichiFuriten (record.ts's
+// sealPassedWins) are the single authority for these two facts (see that
+// module's own doc-comments); this suite pins that legal.ts's ronOffers reads
+// and composes them correctly, and that tsumoOffer stays ungated by either.
+// ---------------------------------------------------------------------------
+describe('temporary and riichi furiten (T-009-01-03)', () => {
+  it('a passed win from another seat seals ronOffers off for that seat until its own next draw', () => {
+    // Reuses RON_SEED (seat 3, pinfu waits 1s/4s/7s): the ronWindowPrefix anchor's
+    // own offer (turn 0: seat 0 tsumogiris 72/1s, seat 3's ron is offered — see
+    // "a claimless ron window offers exactly the draw and the ron" above).
+    // Continuing unronned past seat 1's next draw closes it: non-vacuous (seat 3
+    // is not the immediate next actor), sealed through seat 2's turn, cleared by
+    // seat 3's own next draw at turn 3 — see record.test.ts's identical fixture
+    // for the fold-level facts this test reads through legalActions instead.
+    const live = dealtLive(RON_SEED)
+    const justSealed = foldRecord({ seed: RON_SEED, actions: scriptedTurns(live, 2) })
+    expect(justSealed.tempFuriten[3]).toBe(true)
+    expect(legalActions(justSealed).some((a) => a.type === 'ron' && a.seat === 3)).toBe(false)
+
+    const stillSealed = foldRecord({ seed: RON_SEED, actions: scriptedTurns(live, 3) })
+    expect(stillSealed.tempFuriten[3]).toBe(true)
+    expect(legalActions(stillSealed).some((a) => a.type === 'ron' && a.seat === 3)).toBe(false)
+
+    const unsealed = foldRecord({ seed: RON_SEED, actions: scriptedTurns(live, 4) })
+    expect(unsealed.tempFuriten[3]).toBe(false)
+  })
+
+  it('tsumoOffer is never gated by temporary or riichi furiten', () => {
+    // A structural property of tsumoOffer (legal.ts: "No furiten gate: furiten
+    // restricts ron only, never the self-draw"), verified directly against a
+    // real tsumo-point fold (RON_SEED's own tsumoPointPrefix anchor) with both
+    // furiten fields forced true on a copy — no natural fixture combines a
+    // permanent riichiFuriten seal with a later tsumo point for the SAME seed
+    // this suite already anchors, so the gate's absence is checked directly
+    // against the pure function rather than mined.
+    const state = foldRecord({ seed: RON_SEED, actions: tsumoPointPrefix() })
+    expect(state.drawn).toBe(85)
+    const furitenSeat3: TableState = {
+      ...state,
+      tempFuriten: [false, false, false, true],
+      riichiFuriten: [false, false, false, true],
+    }
+    expect(legalActions(furitenSeat3).some((a) => a.type === 'tsumo')).toBe(true)
+  })
+
+  it('a passed win while in riichi seals riichiFuriten for the rest of the hand, unlike temporary furiten', () => {
+    // Seed 100 (record.test.ts's RIICHI_FURITEN_SEED): seat 0 riichis on its very
+    // first draw (tile 55); post-riichi turn j=13 (seat 2)'s draw closes the
+    // window opened by turn j=12 (seat 1)'s discard, unronned. See
+    // record.test.ts's identical fixture for the exact turn arithmetic.
+    const seed = 100
+    const live = dealtLive(seed)
+    const riichiActions: HandAction[] = [
+      { type: 'draw', seat: 0 },
+      { type: 'riichi', seat: 0, tile: 55 },
+    ]
+    function postRiichiTurns(count: number): HandAction[] {
+      const actions: HandAction[] = []
+      for (let j = 0; j < count; j++) {
+        const s = ((1 + j) % SEAT_COUNT) as Seat
+        actions.push({ type: 'draw', seat: s }, { type: 'discard', seat: s, tile: live[1 + j] })
+      }
+      return actions
+    }
+    const justSealed = foldRecord({
+      seed,
+      actions: [...riichiActions, ...postRiichiTurns(13), { type: 'draw', seat: 2 }],
+    })
+    expect(justSealed.riichiFuriten[0]).toBe(true)
+    expect(legalActions(justSealed).some((a) => a.type === 'ron' && a.seat === 0)).toBe(false)
+
+    // Seat 0's own next turn (j=15): temporary furiten would clear here, but
+    // riichi furiten does not — ronOffers stays closed for seat 0 regardless.
+    const afterOwnDraw = foldRecord({ seed, actions: [...riichiActions, ...postRiichiTurns(16)] })
+    expect(afterOwnDraw.tempFuriten[0]).toBe(false)
+    expect(afterOwnDraw.riichiFuriten[0]).toBe(true)
+    expect(legalActions(afterOwnDraw).some((a) => a.type === 'ron' && a.seat === 0)).toBe(false)
   })
 })
 
