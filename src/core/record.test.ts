@@ -103,6 +103,9 @@ describe('hand-record fold entrypoint', () => {
           drawnFrom: null,
           phase: 'playing',
           win: null,
+          riichi: [false, false, false, false],
+          pot: 0,
+          scoresIn: [25000, 25000, 25000, 25000],
         }
         expect(foldRecord(recordOf(seed))).toEqual(expected)
       }),

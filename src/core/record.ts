@@ -109,6 +109,35 @@ export interface HandRecord {
 }
 
 /**
+ * The stick a riichi declaration moves from the declaring seat into the table pot —
+ * exported so settlement.ts/game.ts price and thread the same number a fold applies,
+ * never a re-typed literal.
+ */
+export const RIICHI_STICK = 1000
+
+/**
+ * The per-hand context a fold needs but HandRecord itself deliberately does not carry
+ * (record.ts's header: a HandRecord is "this pair and nothing else" — the wall/action
+ * log alone is the whole replay format). `scoresIn`/`potIn` are supplied by whichever
+ * game-level fold is running this hand (game.ts's foldGame, mirroring how it already
+ * derives each hand's `seed` via handSeedOf without HandRecord's type ever growing a
+ * "how was this seed derived" field). Seat-indexed like every other per-seat TableState
+ * fact, NOT Player-indexed — the caller remaps from its own persistent Player identity.
+ * Omitted at foldRecord's call site defaults to a fresh, first hand of a fresh game
+ * (25000 each, no carried pot) — the same assumption settlement.ts's own
+ * STARTING_SCORE_DISPLAY already makes for a standalone hand.
+ */
+export interface RiichiContext {
+  /** Each seat's running score as this hand begins — the riichi ≥1000 gate's input. */
+  readonly scoresIn: readonly [number, number, number, number]
+  /** The stick pot carried in from an earlier hand's ryuukyoku, or 0 for a fresh pot. */
+  readonly potIn: number
+}
+
+/** foldRecord's default context: a fresh, first hand of a fresh game — no context supplied. */
+const FRESH_CONTEXT: RiichiContext = { scoresIn: [25000, 25000, 25000, 25000], potIn: 0 }
+
+/**
  * One exposed meld in the derived view — a discriminated union over the call forms.
  * For every claiming form (chi/pon/daiminkan/shouminkan) the claimed tile stays
  * COUNTED in the discarder's pond (ponds keep the complete discard history — furiten
@@ -269,6 +298,34 @@ export interface TableState {
         readonly yaku: readonly WinYakuName[]
       }
     | null
+  /**
+   * Per-seat riichi lock, Seat-indexed — false from the fresh deal, flips permanently
+   * true the moment that seat's riichi action folds (T-009-01-01). A locked seat's
+   * later discards are forced tsumogiri (record.ts's own applyRiichi/performDiscard
+   * guards) and legal.ts withdraws its claim/kan offers, ron excepted — a fully public
+   * fact (a riichi discard is turned sideways at the real table), mirrored verbatim
+   * in SeatView.
+   */
+  riichi: readonly [boolean, boolean, boolean, boolean]
+  /**
+   * The riichi stick pot as it stands right now: starts at the incoming carried pot
+   * (RiichiContext.potIn — 0 for a fresh pot) and grows by RIICHI_STICK per riichi
+   * action folded so far this hand. settlementOf awards the whole pot to an agari's
+   * winner and resets it to 0 for the next hand; an unclaimed pot at ryuukyoku carries
+   * forward as the next hand's potIn (game.ts's foldGame threads it) — a fully public
+   * fact (sticks sit visibly on the table), mirrored verbatim in SeatView.
+   */
+  pot: number
+  /**
+   * Each seat's running score as this hand began (RiichiContext.scoresIn, copied
+   * through verbatim — never decremented across the fold: a seat can declare riichi
+   * at most once, since `riichi[seat]` locks out any further declaration, so the
+   * ≥1000 gate is a single point-in-time comparison against this hand's own starting
+   * total, not a live-decrementing balance). Seat-indexed, NOT exposed via SeatView
+   * (unlike `riichi`/`pot`, a running score is not a per-hand table fact every other
+   * TableState field already publishes, and no dependent ticket's AC needs it there).
+   */
+  scoresIn: readonly [number, number, number, number]
 }
 
 /** True when the three kinds form a run: one numbered suit, three consecutive ranks. */
@@ -922,8 +979,13 @@ function applyAction(state: TableState, action: HandAction, index: number): void
  * frozen conventions (rng stream, wall orientation, deal map, dora position, action
  * encoding). Replay, undo, and review are folds over log prefixes of this function.
  * An illegal or uninterpretable action throws RangeError naming its log index.
+ *
+ * `context` supplies the riichi score gate's and the stick pot's starting values —
+ * deliberately NOT part of `HandRecord` (RiichiContext's own doc-comment). Omitted,
+ * it defaults to a fresh, first hand of a fresh game: every existing single-argument
+ * call site across this codebase keeps compiling and folding exactly as before.
  */
-export function foldRecord(record: HandRecord): TableState {
+export function foldRecord(record: HandRecord, context: RiichiContext = FRESH_CONTEXT): TableState {
   const { live, dead, doraIndicator } = partitionWall(buildWall(record.seed))
   const deal = dealHands(live)
   const dora = doraKindOf(kindOf(doraIndicator))
@@ -944,6 +1006,9 @@ export function foldRecord(record: HandRecord): TableState {
     drawnFrom: null,
     phase: 'playing',
     win: null,
+    riichi: [false, false, false, false],
+    pot: context.potIn,
+    scoresIn: context.scoresIn,
   }
   record.actions.forEach((action, index) => applyAction(state, action, index))
   return state

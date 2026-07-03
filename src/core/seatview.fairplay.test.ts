@@ -185,6 +185,9 @@ function copyState(state: TableState): TableState {
     drawnFrom: state.drawnFrom,
     phase: state.phase,
     win: state.win,
+    riichi: state.riichi,
+    pot: state.pot,
+    scoresIn: state.scoresIn,
   }
 }
 

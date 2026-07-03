@@ -742,6 +742,9 @@ function closedTsumoState(hand13: readonly TileId[], tile: TileId, doras: readon
     drawnFrom: 'wall',
     phase: 'agari',
     win: { by: 'tsumo', winner: 0, tile, yaku: [] },
+    riichi: [false, false, false, false],
+    pot: 0,
+    scoresIn: [25000, 25000, 25000, 25000],
   }
 }
 
