@@ -1,17 +1,27 @@
 <script lang="ts">
-  import { foldGame, legalActions, type GameRecord, type HandAction, type TileId } from '../core'
+  import {
+    foldGame,
+    legalActions,
+    seatView,
+    type GameRecord,
+    type HandAction,
+    type TileId,
+  } from '../core'
   import {
     forcedAction,
     PLAYER,
     promptChoices,
+    riichiPrompt,
     seatScoresOf,
     settleWindow,
     tapClaim,
     tapDiscard,
+    tenpaiHint,
     winChoice,
     type ClaimChoice,
   } from './drive'
   import ClaimPrompt from './ClaimPrompt.svelte'
+  import RiichiPrompt from './RiichiPrompt.svelte'
   import Table from './Table.svelte'
 
   // A fresh table per visit: the seed is drawn at boot (or pinned by a `?seed=` URL
@@ -61,6 +71,14 @@
   // (the hand is already provisionally ended), so the pass tap just lowers the
   // prompt. Never authoritative, never reset — a single hand ends there either way.
   let dismissed = $state(false)
+  // The riichi decision point (T-009-03-01) — "you're tenpai, declare riichi?" — and
+  // the pre-tenpai teaching hint, both pure reads over the same seatView; riichiPrompt
+  // already defers to `win` on its own (drive.ts's own guard), and `hint` is gated
+  // behind riichi being absent purely to skip a redundant shanten call on every
+  // reactive re-run while the prompt is live (tenpaiHint already returns null at
+  // shanten 0 regardless).
+  const riichi = $derived(riichiPrompt(table, offered, PLAYER))
+  const hint = $derived(riichi === null ? tenpaiHint(seatView(table, PLAYER)) : null)
 
   // Pacing is presentation: one forced action per tick keeps ponds and the wall
   // counter landing visibly, action by action, instead of a whole bot round at once.
@@ -99,6 +117,19 @@
     if (win === null) return
     const settled = settleWindow(table, offered, PLAYER, win)
     if (settled !== null) activeHand().push(settled)
+  }
+
+  // Both riichi buttons fold one of drive.ts's own riichiPrompt pair directly — no
+  // settleWindow arbitration needed (this is the player's own-turn decision, not a
+  // claim window another seat could also answer).
+  function declareRiichi() {
+    if (riichi === null) return
+    activeHand().push(riichi.declare)
+  }
+
+  function declineRiichi() {
+    if (riichi === null) return
+    activeHand().push(riichi.decline)
   }
 
   // Append a fresh empty hand to the record — the "next hand" control (on the
@@ -162,6 +193,10 @@
         onpass={pass}
         onwin={takeWin}
       />
+    {:else if riichi !== null}
+      <RiichiPrompt tile={riichi.tile} ondeclare={declareRiichi} ondecline={declineRiichi} />
+    {:else if hint !== null}
+      <p class="hint">{hint} away from tenpai</p>
     {/if}
   </div>
 </main>
@@ -201,6 +236,17 @@
     /* Sized to a one-row prompt exactly (44px button + prompt padding/border,
        measured 66px) — the common window opens without moving the hand above. */
     min-height: 4.25rem;
+  }
+
+  /* The pre-tenpai teaching hint: "subtle" per the ticket — a bare line, no chrome,
+     no button — sitting in the same reserved slot the prompts otherwise fill. */
+  .hint {
+    margin: 0;
+    padding: 0.5rem 0;
+    color: #a8c7b8;
+    font-size: 0.75rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
   }
 
   header {
