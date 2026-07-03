@@ -196,6 +196,8 @@ describe('public facts pass through', () => {
         expect(view.mustDiscard).toBe(state.mustDiscard)
         expect(view.claimable).toBe(state.claimable)
         expect(view.win).toBe(state.win)
+        expect(view.riichi).toEqual(state.riichi)
+        expect(view.pot).toBe(state.pot)
       }),
     )
   })

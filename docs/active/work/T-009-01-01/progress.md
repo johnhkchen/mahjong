@@ -17,7 +17,8 @@ Tracking plan.md's 8 steps. Updated as each completes.
   (`ScoreBreakdown`/`scoreBreakdownOf`, already fully implemented, tested, and
   passing, just uncommitted) — see progress notes below for why.
 - [x] Step 6 — game.ts: thread scoresIn/potIn/pot
-- [ ] Step 7 — seatview.ts: expose riichi/pot
+- [x] Step 7 — seatview.ts: expose riichi/pot (also required widening
+  policy.test.ts's hand-built `viewOf` SeatView fixture helper)
 - [ ] Step 8 — full-suite confirmation pass
 
 ## Deviations from plan.md

@@ -65,6 +65,16 @@ export interface SeatView {
   readonly mustDiscard: boolean
   /** The declared win once phase is 'agari' — winner, tile, and yaku are announced facts. */
   readonly win: TableState['win']
+  /**
+   * Per-seat riichi lock, Seat-indexed (T-009-01-01) — a fully public fact, like
+   * `ponds`/`melds`: a riichi discard is turned sideways at the real table.
+   */
+  readonly riichi: TableState['riichi']
+  /**
+   * The riichi stick pot as it stands right now (T-009-01-01) — a fully public
+   * fact, like `doraIndicators`: sticks sit visibly on the table.
+   */
+  readonly pot: number
 }
 
 /**
@@ -89,5 +99,7 @@ export function seatView(state: TableState, seat: Seat): SeatView {
     claimable: state.claimable,
     mustDiscard: state.mustDiscard,
     win: state.win,
+    riichi: state.riichi,
+    pot: state.pot,
   }
 }

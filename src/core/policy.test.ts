@@ -87,6 +87,8 @@ function viewOf(partial: {
     claimable: partial.claimable ?? null,
     mustDiscard: partial.mustDiscard ?? false,
     win: null,
+    riichi: [false, false, false, false],
+    pot: 0,
   }
 }
 
