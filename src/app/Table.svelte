@@ -398,4 +398,35 @@
       }
     }
   }
+
+  /* Motion: draw + discard entrances — insertion transitions via
+     @starting-style (transitions are client-only, so SSR output is untouched;
+     pre-@starting-style browsers fall back to tiles appearing instantly, the
+     reduced-motion path). The 180ms settle finishes inside the drive's 250ms
+     action tick, so each landing reads before the next action folds. On the
+     recreated claimed li this transition is preempted by claim-taken above —
+     running animations own the shared properties. */
+  @media (prefers-reduced-motion: no-preference) {
+    /* A discard settling onto the felt: drop + fade. */
+    .pond li {
+      transition:
+        opacity 180ms ease-out,
+        transform 180ms ease-out;
+      @starting-style {
+        opacity: 0;
+        transform: translateY(-0.4rem);
+      }
+    }
+
+    /* The draw arriving from the wall: rise + fade into the drawn slot. */
+    .drawn {
+      transition:
+        opacity 180ms ease-out,
+        transform 180ms ease-out;
+      @starting-style {
+        opacity: 0;
+        transform: translateY(0.35rem);
+      }
+    }
+  }
 </style>
