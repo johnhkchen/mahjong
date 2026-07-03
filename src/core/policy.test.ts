@@ -17,6 +17,7 @@ import {
   callPolicy,
   discardPolicy,
   foldRecord,
+  isSimple,
   kindOf,
   legalActions,
   seatView,
@@ -27,6 +28,7 @@ import {
   type Meld,
   type Seat,
   type SeatView,
+  type TableState,
   type TileId,
   type TileKind,
 } from './index'
@@ -576,46 +578,145 @@ describe('callPolicy — purity and determinism', () => {
 const FULL_TURNS = LIVE_WALL_SIZE - DEAL_SIZE
 const ACTION_BOUND = 2 * FULL_TURNS + 2 * 4 * SEAT_COUNT + 2
 
+/** The claim-window call forms, test-side (the policy module's ClaimOffer twin). */
+type ClaimAction = Extract<HandAction, { type: 'chi' | 'pon' | 'daiminkan' }>
+
+function isClaimAction(action: HandAction): action is ClaimAction {
+  return action.type === 'chi' || action.type === 'pon' || action.type === 'daiminkan'
+}
+
 /**
- * Drive a full hand from a seed with every own-turn decision made by discardPolicy
- * (during 'playing', every non-empty offered set IS an own-turn point: pre-draw sets
- * lead with the turn seat's draw, post-draw and mustDiscard sets are the turn seat's).
- * The walk stops at an ended phase — ryuukyoku's houtei-only offered set is the one
- * class the policy must never be shown. Checks are plain throws so the sweep stays
- * one-expect-per-game; state advances only by refolding the longer record.
+ * The oracle twin of the accept rule: a claim the sweep is about to fold must
+ * strictly cut shanten and keep a yaku anchor — re-derived here from the folded
+ * state, independently of the policy's own arithmetic.
  */
-function playPolicy(seed: number): { actions: HandAction[]; endPhase: string } {
+function assertClaimSound(state: TableState, claim: ClaimAction, seed: number, step: number): void {
+  const seat = claim.seat
+  const hand = state.hands[seat]
+  const melds = state.melds[seat]
+  const from = state.claimable!.seat
+  const meld: Meld =
+    claim.type === 'daiminkan'
+      ? { type: 'daiminkan', claimed: claim.tile, from, own: claim.uses }
+      : { type: claim.type, claimed: claim.tile, from, own: claim.uses }
+  const remainder = hand.filter((t) => !(claim.uses as readonly TileId[]).includes(t)).map(kindOf)
+  const allMelds = [...melds, meld]
+  const pre = shanten(hand.map(kindOf), melds)
+  const post = shanten(remainder, allMelds)
+  if (post >= pre) {
+    throw new Error(`seed ${seed} step ${step}: folded claim does not cut shanten (${pre} → ${post})`)
+  }
+  const valueKinds: TileKind[] = ['5z', '6z', '7z', `${seat + 1}z` as TileKind, '1z']
+  const tilesOf = (m: Meld): readonly TileId[] => (m.type === 'ankan' ? m.own : [m.claimed, ...m.own])
+  const yakuhai =
+    allMelds.some((m) => m.type !== 'chi' && valueKinds.includes(kindOf(m.own[0]))) ||
+    valueKinds.some((v) => remainder.filter((k) => k === v).length >= 2)
+  const tanyao =
+    allMelds.every((m) => tilesOf(m).every((t) => isSimple(kindOf(t)))) &&
+    remainder.filter((k) => !isSimple(k)).length <= post + 1
+  if (!yakuhai && !tanyao) {
+    throw new Error(`seed ${seed} step ${step}: folded claim keeps no yaku anchor`)
+  }
+}
+
+/**
+ * Drive a full hand from a seed with every decision made by the policy pair —
+ * discardPolicy at own-turn points, callPolicy at claim windows and houtei — and the
+ * driver arbitrating across seats exactly as T-006-03-03 will: consult callPolicy
+ * once per seat holding a window offer, fold the earliest non-draw answer in offered
+ * order (ron-before-claims, atamahane among rons, pon-before-chi), else the draw.
+ * Checks are plain throws so the sweep stays one-expect-per-game; state advances
+ * only by refolding the longer record.
+ */
+function playPolicy(seed: number): {
+  actions: HandAction[]
+  endPhase: string
+  claimsFolded: number
+  ronsFolded: number
+} {
   const actions: HandAction[] = []
+  let claimsFolded = 0
+  let ronsFolded = 0
   for (;;) {
     const state = foldRecord({ seed, actions })
     const legal = legalActions(state)
-    if (state.phase !== 'playing' || legal.length === 0) {
-      return { actions, endPhase: state.phase }
+    if (state.phase === 'agari' || legal.length === 0) {
+      return { actions, endPhase: state.phase, claimsFolded, ronsFolded }
     }
-    const seat = state.turn
-    const chosen = discardPolicy(seatView(state, seat), legal)
-    if (!legal.includes(chosen)) {
-      throw new Error(`seed ${seed} step ${actions.length}: chosen action is not an offered element`)
-    }
-    const tsumo = legal.find((a) => a.type === 'tsumo' && a.seat === seat)
-    if (tsumo && chosen !== tsumo) {
-      throw new Error(`seed ${seed} step ${actions.length}: offered tsumo was not taken`)
-    }
-    if (chosen.type === 'discard') {
-      const pool = state.drawn === null ? [...state.hands[seat]] : [...state.hands[seat], state.drawn]
-      const melds = state.melds[seat]
-      const score = (tile: TileId): number =>
-        shanten(pool.filter((t) => t !== tile).map(kindOf), melds)
-      const best = Math.min(
-        ...legal
-          .filter((a): a is Extract<HandAction, { type: 'discard' }> => a.type === 'discard')
-          .map((a) => score(a.tile)),
-      )
-      if (score(chosen.tile) !== best) {
-        throw new Error(`seed ${seed} step ${actions.length}: discard is not shanten-minimal`)
+    const step = actions.length
+    let chosen: HandAction
+    const isCallPoint =
+      state.phase === 'ryuukyoku' ||
+      (state.drawn === null && !state.mustDiscard && state.claimable !== null)
+    if (isCallPoint) {
+      // Consult each offer-holding seat once, in offered order (rotation order).
+      const consulted = new Set<number>()
+      let best: HandAction | null = null
+      let bestAt = Infinity
+      for (const offer of legal) {
+        if (offer.type !== 'ron' && !isClaimAction(offer)) continue
+        if (consulted.has(offer.seat)) continue
+        consulted.add(offer.seat)
+        const answer = callPolicy(seatView(state, offer.seat), legal)
+        if (!legal.includes(answer)) {
+          throw new Error(`seed ${seed} step ${step}: call answer is not an offered element`)
+        }
+        const ron = legal.find((a) => a.type === 'ron' && a.seat === offer.seat)
+        if (ron && answer !== ron) {
+          throw new Error(`seed ${seed} step ${step}: offered ron was not taken`)
+        }
+        if (answer.type === 'draw') continue
+        const at = legal.indexOf(answer)
+        if (at < bestAt) {
+          best = answer
+          bestAt = at
+        }
       }
-      if (state.drawn !== null && score(chosen.tile) > shanten(state.hands[seat].map(kindOf), melds)) {
-        throw new Error(`seed ${seed} step ${actions.length}: discard raised shanten past the pre-draw hand`)
+      if (best === null) {
+        if (state.phase === 'ryuukyoku') {
+          // Every houtei ron holder must have answered with its ron above; with no
+          // ron offers at all the legal set was empty and the walk already returned.
+          throw new Error(`seed ${seed} step ${step}: ryuukyoku call point declined every ron`)
+        }
+        chosen = legal[0] // the draw at the head — every consulted seat passed
+        if (chosen.type !== 'draw') {
+          throw new Error(`seed ${seed} step ${step}: pre-draw offered set does not lead with the draw`)
+        }
+      } else {
+        if (isClaimAction(best)) {
+          assertClaimSound(state, best, seed, step)
+          claimsFolded += 1
+        } else {
+          ronsFolded += 1
+        }
+        chosen = best
+      }
+    } else {
+      const seat = state.turn
+      chosen = discardPolicy(seatView(state, seat), legal)
+      if (!legal.includes(chosen)) {
+        throw new Error(`seed ${seed} step ${step}: chosen action is not an offered element`)
+      }
+      const tsumo = legal.find((a) => a.type === 'tsumo' && a.seat === seat)
+      if (tsumo && chosen !== tsumo) {
+        throw new Error(`seed ${seed} step ${step}: offered tsumo was not taken`)
+      }
+      if (chosen.type === 'discard') {
+        const pool = state.drawn === null ? [...state.hands[seat]] : [...state.hands[seat], state.drawn]
+        const melds = state.melds[seat]
+        const score = (tile: TileId): number =>
+          shanten(pool.filter((t) => t !== tile).map(kindOf), melds)
+        const best = Math.min(
+          ...legal
+            .filter((a): a is Extract<HandAction, { type: 'discard' }> => a.type === 'discard')
+            .map((a) => score(a.tile)),
+        )
+        if (score(chosen.tile) !== best) {
+          throw new Error(`seed ${seed} step ${step}: discard is not shanten-minimal`)
+        }
+        if (state.drawn !== null && score(chosen.tile) > shanten(state.hands[seat].map(kindOf), melds)) {
+          throw new Error(`seed ${seed} step ${step}: discard raised shanten past the pre-draw hand`)
+        }
       }
     }
     actions.push(chosen)
@@ -625,25 +726,33 @@ function playPolicy(seed: number): { actions: HandAction[]; endPhase: string } {
   }
 }
 
-describe('property: the policy over seeded whole games', () => {
+describe('property: the policy pair over seeded whole games', () => {
   // Corpus size is a runtime budget: each seed costs ~150ms (every prefix refolds —
-  // the dynamics.test.ts O(n²) shape — plus the oracle re-scores every discard).
+  // the dynamics.test.ts O(n²) shape — plus the oracle re-scores every discard and
+  // every folded claim). Explicit timeouts because CI-adjacent machines run suites
+  // concurrently — the budget is generous headroom, not expected runtime.
   const CORPUS_SEEDS = Array.from({ length: 12 }, (_, i) => i)
 
-  it('plays every corpus seed to an end under the AC at every decision point', () => {
+  it('plays every corpus seed to an end under the AC at every decision point', { timeout: 60_000 }, () => {
+    let claims = 0
     for (const seed of CORPUS_SEEDS) {
-      const { endPhase } = playPolicy(seed)
+      const { endPhase, claimsFolded } = playPolicy(seed)
       expect(['ryuukyoku', 'agari']).toContain(endPhase)
+      claims += claimsFolded
     }
+    // The branch must actually be exercised: a driver that silently never consults
+    // callPolicy would pass every per-step oracle. If a corpus change ever zeroes
+    // this, widen the corpus rather than weakening the check.
+    expect(claims).toBeGreaterThan(0)
   })
 
-  it('replays byte-identically — same seed, same action list (the T-006-03-04 rehearsal)', () => {
+  it('replays byte-identically — same seed, same action list (the T-006-03-04 rehearsal)', { timeout: 60_000 }, () => {
     for (const seed of [0, 7, 23]) {
       expect(playPolicy(seed).actions).toEqual(playPolicy(seed).actions)
     }
   })
 
-  it('holds across sampled seeds', () => {
+  it('holds across sampled seeds', { timeout: 60_000 }, () => {
     fc.assert(
       fc.property(fc.integer({ min: 0, max: 0xffffffff }), (seed) => {
         const { endPhase } = playPolicy(seed)
