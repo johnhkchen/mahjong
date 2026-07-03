@@ -13,12 +13,14 @@ import {
   kindOf,
   legalActions,
   scoreBreakdownOf,
+  seatView,
   type HandAction,
   type TileId,
 } from '../core'
-import { PLAYER, promptChoices, winChoice } from './drive'
+import { PLAYER, promptChoices, riichiPrompt, tenpaiHint, winChoice } from './drive'
 import App from './App.svelte'
 import ClaimPrompt from './ClaimPrompt.svelte'
+import RiichiPrompt from './RiichiPrompt.svelte'
 import Table from './Table.svelte'
 
 // The suite's pinned seed: App now boots on a random seed (or a `?seed=` URL pin), so
@@ -271,6 +273,64 @@ describe('win prompt view (SSR)', () => {
     expect(body).toContain('aria-label="ron 6m"')
     expect(body).toContain('aria-label="pass"')
     expect(body).not.toContain('call on')
+  })
+})
+
+// The riichi-prompt anchor (T-009-03-01, drive.test.ts's own anchor, mirrored): seed
+// 397, East's opening draw (turn 0) leaves exactly one tenpai-preserving discard —
+// tile 130 (6z, hatsu). Props are DERIVED here — riichiPrompt over the live offering —
+// never typed in, matching every other prompt suite in this file.
+describe('riichi prompt view (SSR)', () => {
+  const dealtR = foldRecord({ seed: 397, actions: [] })
+  const riichiPoint = foldRecord({ seed: 397, actions: [{ type: 'draw', seat: 0 }] })
+  const offered = legalActions(riichiPoint)
+  const found = riichiPrompt(riichiPoint, offered, PLAYER)
+
+  it('names exactly one tenpai-preserving tile at this anchor', () => {
+    expect(dealtR.hands[0]).toContain(103) // fixture sanity, unrelated to the ask
+    expect(found).not.toBeNull()
+    expect(found!.tile).toBe(130)
+  })
+
+  const { body } = render(RiichiPrompt, { props: { tile: found!.tile } })
+
+  it('exposes the riichi-prompt landmark', () => {
+    expect(body).toContain('aria-label="riichi prompt"')
+  })
+
+  it('asks the question and shows the candidate tile', () => {
+    expect(body).toContain("you're tenpai")
+    expect(body).toContain('6z')
+  })
+
+  it('states all three stakes, one line each', () => {
+    expect(body).toContain('aria-label="stake hand-locks"')
+    expect(body).toContain('aria-label="stake stick"')
+    expect(body).toContain('aria-label="stake yaku"')
+  })
+
+  it('renders both the declare and decline buttons', () => {
+    expect(body).toContain('aria-label="declare riichi"')
+    expect(body).toContain('aria-label="not yet"')
+  })
+})
+
+// The tenpai hint's own anchor: the app.ssr.test.ts "mid-hand" fixture (defined
+// below, reused here since it is the exact pre-tenpai, holding-a-draw shape the hint
+// needs) plus the freshly dealt boot state (no draw yet — nothing to hint).
+describe('tenpai hint', () => {
+  it('reads the fold-derived shanten count directly, mid-hand and pre-tenpai', () => {
+    const dealtH = foldRecord({ seed: BOOT_SEED, actions: [] })
+    const midHandActions = tsumogiriTurns(dealtH.live, 8)
+    midHandActions[1] = { type: 'discard', seat: 0, tile: dealtH.hands[0][0] }
+    midHandActions.push({ type: 'draw', seat: 0 })
+    const midHand = foldRecord({ seed: BOOT_SEED, actions: midHandActions })
+    expect(tenpaiHint(seatView(midHand, PLAYER))).toBe(2)
+  })
+
+  it('is null at the freshly dealt boot — no draw yet, nothing to hint', () => {
+    const dealtH = foldRecord({ seed: handSeedOf(BOOT_SEED, 0), actions: [] })
+    expect(tenpaiHint(seatView(dealtH, PLAYER))).toBeNull()
   })
 })
 
