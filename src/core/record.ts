@@ -8,9 +8,10 @@ import { kindOf, rankOf, suitOf, type TileId, type TileKind } from './tiles'
 import { buildWall, partitionWall } from './wall'
 import { doraKindOf } from './dora'
 import { dealHands, SEAT_COUNT, type Seat } from './deal'
-import type { WindKind } from './yaku'
+import type { RiichiStatus, WindKind } from './yaku'
 import { yakuOf, type WinYakuName } from './yakuman'
 import { shanten } from './shanten'
+import { isAgari } from './agari'
 
 /**
  * The element type of the ordered action log — the engine's action vocabulary.
@@ -234,6 +235,19 @@ export interface TableState {
   /** The mapped dora kind of each flipped indicator, same order. Fresh per fold. */
   doras: TileKind[]
   /**
+   * Every flipped URA-dora indicator, same flip order as `doraIndicators` and one
+   * dead-wall slot over (T-009-01-02): [0] is dead[5] (paired with the initial
+   * dora indicator at dead[4]); each kan appends the indicator paired with that
+   * kan's OWN dora flip (wall.ts's frozen dead-wall layout: `[5,7,9,11,13]` are the
+   * ura-dora indicators, each directly after its dora indicator). Hidden from
+   * every player until a riichi win by real-rules convention — computed here
+   * because TableState is already full-information, but deliberately never
+   * projected into SeatView (the fair-play boundary stays at that projection).
+   */
+  uraDoraIndicators: TileId[]
+  /** The mapped dora kind of each ura-dora indicator, same order. Fresh per fold. */
+  uradora: TileKind[]
+  /**
    * Four discard ponds indexed by Seat, each in discard order — the order IS the
    * pond's meaning (future defense reads depend on it). Fresh arrays per fold.
    */
@@ -321,6 +335,16 @@ export interface TableState {
    */
   riichi: readonly [boolean, boolean, boolean, boolean]
   /**
+   * Whether each seat's riichi (T-009-01-02) was a DOUBLE riichi — declared on
+   * that seat's own first discard of the hand, with no call (chi/pon/daiminkan/
+   * shouminkan/ankan, from ANY seat) having folded yet. Set once, at declare time
+   * (`applyRiichi`), alongside `riichi[seat] = true`; never true when `riichi[seat]`
+   * is false. Implies `riichi[seat]` but is a SEPARATE fact from it (design.md
+   * Decision 3) — `riichi` stays exactly "is this seat locked," unchanged in
+   * meaning by this ticket.
+   */
+  doubleRiichi: readonly [boolean, boolean, boolean, boolean]
+  /**
    * Temporary furiten (T-009-01-03), Seat-indexed — true from the moment a discard
    * (anyone's) completes this seat's hand with a yaku and the seat does not ron it
    * (the log's next action simply is not that ron — a ron ends the hand, so nothing
@@ -338,6 +362,17 @@ export interface TableState {
    * passed win seals ron for the rest of the hand. `ronOffers` ORs this in too.
    */
   riichiFuriten: readonly [boolean, boolean, boolean, boolean]
+  /**
+   * Each seat's riichi ippatsu window, Seat-indexed (T-009-01-02) — set true the
+   * moment that seat's riichi declaration folds, reset to false EITHER for every
+   * seat at once, the instant any call (chi/pon/daiminkan/shouminkan/ankan, from
+   * ANY seat — a locked seat can make none itself, so this only ever fires for a
+   * still-open seat's call) folds anywhere, OR for that one seat alone, the
+   * instant its own next ordinary discard folds without a win (one uninterrupted
+   * go-around completed). Read at a win (`applyWinTail`) to gate the `ippatsu`
+   * yaku; meaningless once `riichi[seat]` is permanently settled either way.
+   */
+  ippatsu: readonly [boolean, boolean, boolean, boolean]
   /**
    * The riichi stick pot as it stands right now: starts at the incoming carried pot
    * (RiichiContext.potIn — 0 for a fresh pot) and grows by RIICHI_STICK per riichi
@@ -425,13 +460,17 @@ function applyClaim(
       `action ${index}: pon of tiles ${tile}+${uses[0]}+${uses[1]} (kinds ${kindOf(tile)}, ${kindOf(uses[0])}, ${kindOf(uses[1])}) do not form a triplet`,
     )
   }
+  // T-009-01-03: the window closes, unronned by every seat that could have —
+  // BEFORE any hand mutates below (a completion probe against a seat's hand
+  // mid-claim, tiles already spliced out for this meld, is meaningless).
+  sealPassedWins(state, window.seat, window.tile)
   hand.splice(hand.indexOf(uses[0]), 1)
   hand.splice(hand.indexOf(uses[1]), 1)
   state.melds[seat].push({ type, claimed: tile, from: window.seat, own: uses })
   state.turn = seat
-  sealPassedWins(state, window.seat, window.tile) // T-009-01-03: the window closes, unronned
   state.claimable = null
   state.mustDiscard = true
+  state.ippatsu = [false, false, false, false] // T-009-01-02: a call breaks every open window
 }
 
 /** The dead wall holds exactly four rinshan tiles (dead[0..3]) — the kan ceiling. */
@@ -496,10 +535,20 @@ function applyKanTail(state: TableState, kansBefore: number): void {
   const indicator = state.dead[6 + kansBefore]
   state.doraIndicators.push(indicator)
   state.doras.push(doraKindOf(kindOf(indicator)))
+  // T-009-01-02: the ura-dora indicator paired with this same kan's dora indicator
+  // sits one dead-wall slot over — read at the identical pre-shift moment (research.md
+  // §5's induction: state.dead[7 + kansBefore] resolves to the frozen original index
+  // 7 + 2*kansBefore, exactly one past this kan's own dora indicator).
+  const uraIndicator = state.dead[7 + kansBefore]
+  state.uraDoraIndicators.push(uraIndicator)
+  state.uradora.push(doraKindOf(kindOf(uraIndicator)))
   state.drawn = state.dead.shift()!
   state.drawnFrom = 'rinshan'
   state.dead.push(state.live.pop()!)
   clearTempFuriten(state, state.turn) // T-009-01-03: a rinshan draw is still a draw
+  // T-009-01-02: every kan form (daiminkan/ankan/shouminkan) is a call — breaks
+  // every currently open ippatsu window, the ANY-call convention design.md fixes.
+  state.ippatsu = [false, false, false, false]
 }
 
 /**
@@ -562,10 +611,12 @@ function applyDaiminkan(
       `action ${index}: daiminkan of tiles ${tile}+${uses.join('+')} (kinds ${kindOf(tile)}, ${uses.map(kindOf).join(', ')}) do not form four of a kind`,
     )
   }
+  // T-009-01-03: the window closes, unronned by every seat that could have —
+  // BEFORE any hand mutates below (same reasoning as applyClaim's own comment).
+  sealPassedWins(state, window.seat, window.tile)
   for (const used of uses) hand.splice(hand.indexOf(used), 1)
   state.melds[seat].push({ type: 'daiminkan', claimed: tile, from: window.seat, own: uses })
   state.turn = seat
-  sealPassedWins(state, window.seat, window.tile) // T-009-01-03: the window closes, unronned
   state.claimable = null
   applyKanTail(state, kans)
 }
@@ -717,6 +768,19 @@ function isMenzen(melds: readonly Meld[]): boolean {
 }
 
 /**
+ * `seat`'s riichi status right now, from TableState.riichi/doubleRiichi
+ * (T-009-01-02) — shared by this module's two yakuOf assembly points
+ * (applyWinTail, completesWithYaku); settlement.ts's winOf and legal.ts's
+ * winYaku each restate this independently (the cross-module duplication
+ * convention), but within ONE module a shared local helper is the established
+ * style (windKindOf/isMenzen, above).
+ */
+function riichiStatusOf(state: TableState, seat: Seat): RiichiStatus {
+  if (!state.riichi[seat]) return 'none'
+  return state.doubleRiichi[seat] ? 'double' : 'riichi'
+}
+
+/**
  * The round wind every fold assembles wins with. Records are single hands — round
  * rotation is match structure the engine does not hold — so the fold fixes East,
  * which is correct for every East-round hand (all of a tonpuusen) and conservative
@@ -730,25 +794,30 @@ const ROUND_WIND: WindKind = '1z'
  * modules' independence doctrine): does `tile`, discarded just now, complete
  * `seat`'s CURRENT hand with at least one yaku? Mirrors `applyWinTail`'s derivation
  * call exactly (source `'discard'`, the same `lastTile`/`seatWind`/`roundWind`
- * inputs), reusing `yakuOf`'s own throw as the completion signal rather than
- * importing `isAgari` fresh. Used only to detect a passed win for furiten-sealing —
- * never to decide legality, which stays legal.ts's job.
+ * inputs). Gates on `isAgari` FIRST — legal.ts's own cheapest-gates-first
+ * convention (ronOffers probes isAgari before ever computing yaku) — since this
+ * runs on every window close and most discards complete nobody's hand; `yakuOf`'s
+ * own non-completion throw is caught only as a backstop, never the primary signal.
+ * Used only to detect a passed win for furiten-sealing — never to decide legality,
+ * which stays legal.ts's job.
  */
 function completesWithYaku(state: TableState, seat: Seat, tile: TileId): boolean {
+  const concealed = [...state.hands[seat].map(kindOf), kindOf(tile)]
+  if (!isAgari(concealed, state.melds[seat])) return false // the cheap gate first
   try {
     const yaku = yakuOf({
-      concealed: [...state.hands[seat].map(kindOf), kindOf(tile)],
+      concealed,
       melds: state.melds[seat],
       winningKind: kindOf(tile),
       source: 'discard',
       lastTile: state.live.length === 0,
       seatWind: windKindOf(seat),
       roundWind: ROUND_WIND,
-      // T-009-01-02: riichi/ippatsu wired for real once TableState carries
-      // doubleRiichi/ippatsu (this ticket's own commit 2) — inert placeholder
-      // until then, matching this file's OTHER yakuOf call (applyWinTail) below.
-      riichi: 'none',
-      ippatsu: false,
+      // T-009-01-02: `seat`'s CURRENT riichi status/window — a riichi seat's
+      // otherwise-yakuless hand still completes with a yaku (riichi itself is
+      // one), so this must be threaded for furiten-sealing to be correct.
+      riichi: riichiStatusOf(state, seat),
+      ippatsu: state.ippatsu[seat],
     })
     return yaku.length > 0
   } catch {
@@ -776,6 +845,7 @@ function sealPassedWins(state: TableState, discarder: Seat, tile: TileId): void 
   let riichi: [boolean, boolean, boolean, boolean] | null = null
   for (let k = 1; k < SEAT_COUNT; k++) {
     const seat = ((discarder + k) % SEAT_COUNT) as Seat
+    console.error('DEBUG sealPassedWins', { discarder, tile, seat, completes: completesWithYaku(state, seat, tile) })
     if (!completesWithYaku(state, seat, tile)) continue
     temp ??= [...state.tempFuriten] as [boolean, boolean, boolean, boolean]
     temp[seat] = true
@@ -820,10 +890,8 @@ function applyWinTail(
       lastTile: state.live.length === 0,
       seatWind: windKindOf(winner),
       roundWind: ROUND_WIND,
-      // T-009-01-02: inert placeholder — commit 2 replaces with TableState.riichi/
-      // doubleRiichi/ippatsu-derived values for `winner`.
-      riichi: 'none',
-      ippatsu: false,
+      riichi: riichiStatusOf(state, winner),
+      ippatsu: state.ippatsu[winner],
     })
   } catch {
     throw new RangeError(
@@ -1030,10 +1098,24 @@ function applyRiichi(
       `action ${index}: riichi of tile ${tile}, which does not leave seat ${seat}'s hand at tenpai`,
     )
   }
+  // T-009-01-02: double riichi's precondition, read BEFORE performDiscard pushes
+  // this discard into the pond — "this seat's first discard" needs the pre-discard
+  // pond length. "No call yet" reuses state.melds itself: only a call ever pushes
+  // a meld (design.md Decision 3's rejected-monotonic-flag note), so scanning every
+  // seat's meld list is an exact, already-available proxy — no separate flag needed.
+  const isFirstDiscard = state.ponds[seat].length === 0
+  const noCallsYet = state.melds.every((seatMelds) => seatMelds.length === 0)
+  const double = isFirstDiscard && noCallsYet
   performDiscard(state, seat, tile, index, 'riichi')
   const locked = [...state.riichi] as [boolean, boolean, boolean, boolean]
   locked[seat] = true
   state.riichi = locked
+  const doubled = [...state.doubleRiichi] as [boolean, boolean, boolean, boolean]
+  doubled[seat] = double
+  state.doubleRiichi = doubled
+  const opened = [...state.ippatsu] as [boolean, boolean, boolean, boolean]
+  opened[seat] = true
+  state.ippatsu = opened
   state.pot += RIICHI_STICK
 }
 
@@ -1130,6 +1212,15 @@ function applyAction(state: TableState, action: HandAction, index: number): void
         )
       }
       performDiscard(state, action.seat, action.tile, index, 'discard')
+      if (state.riichi[action.seat]) {
+        // T-009-01-02: this is an already-locked seat's OWN forced tsumogiri (the
+        // guard above already required it) — one uninterrupted go-around completed
+        // without a win, so THIS seat's ippatsu window closes (others', if any, are
+        // untouched — the per-seat-not-global reset, unlike a call's mass reset).
+        const closed = [...state.ippatsu] as [boolean, boolean, boolean, boolean]
+        closed[action.seat] = false
+        state.ippatsu = closed
+      }
       return
     }
     case 'riichi': {
@@ -1198,6 +1289,11 @@ export function foldRecord(record: HandRecord, context: RiichiContext = FRESH_CO
     dora,
     doraIndicators: [doraIndicator],
     doras: [dora],
+    // T-009-01-02: the initial ura-dora indicator, dead[5] — paired with the
+    // initial dora indicator dead[4] (wall.ts's frozen dead-wall layout), mirroring
+    // the doraIndicators/doras initialization one line above.
+    uraDoraIndicators: [dead[5]],
+    uradora: [doraKindOf(kindOf(dead[5]))],
     ponds: [[], [], [], []],
     melds: [[], [], [], []],
     claimable: null,
@@ -1208,8 +1304,10 @@ export function foldRecord(record: HandRecord, context: RiichiContext = FRESH_CO
     phase: 'playing',
     win: null,
     riichi: [false, false, false, false],
+    doubleRiichi: [false, false, false, false],
     tempFuriten: [false, false, false, false],
     riichiFuriten: [false, false, false, false],
+    ippatsu: [false, false, false, false],
     pot: context.potIn,
     scoresIn: context.scoresIn,
   }

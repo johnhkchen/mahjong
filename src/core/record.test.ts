@@ -94,6 +94,8 @@ describe('hand-record fold entrypoint', () => {
           dora: doraKindOf(kindOf(partition.doraIndicator)),
           doraIndicators: [partition.doraIndicator],
           doras: [doraKindOf(kindOf(partition.doraIndicator))],
+          uraDoraIndicators: [partition.dead[5]],
+          uradora: [doraKindOf(kindOf(partition.dead[5]))],
           ponds: [[], [], [], []],
           melds: [[], [], [], []],
           claimable: null,
@@ -104,6 +106,10 @@ describe('hand-record fold entrypoint', () => {
           phase: 'playing',
           win: null,
           riichi: [false, false, false, false],
+          doubleRiichi: [false, false, false, false],
+          tempFuriten: [false, false, false, false],
+          riichiFuriten: [false, false, false, false],
+          ippatsu: [false, false, false, false],
           pot: 0,
           scoresIn: [25000, 25000, 25000, 25000],
         }
@@ -737,6 +743,249 @@ describe('riichi declaration folds', () => {
         actions: [...actions, { type: 'riichi', seat: dangling.turn, tile: dangling.drawn! }],
       }),
     ).toThrow(/no draws remaining/)
+  })
+})
+
+// ————————————————————————————————————————————————————————————————————————————
+// T-009-01-02: the riichi yaku family's fold-time tracking (doubleRiichi/
+// ippatsu) and ura-dora capture. Every fixture below is a real mined seed,
+// scanned offline (a throwaway scratchpad script, the win.test.ts precedent) —
+// never a hand-built TableState, matching this file's own established
+// discipline for record.ts (review.md's "never a hand-built TableState" rule
+// for this module specifically; settlement.test.ts is where hand-built
+// TableState fixtures belong).
+// ————————————————————————————————————————————————————————————————————————————
+
+describe('double riichi and ippatsu fold-time tracking', () => {
+  it('double riichi: declared on the very first action of the whole hand', () => {
+    // The SAME RIICHI_SEED/RIICHI anchor as the block above: riichiPrefix is
+    // literally seat 0's first draw of the hand, with zero prior discards
+    // anywhere and zero melds anywhere — the double riichi precondition holds
+    // by construction.
+    const state = foldRecord({
+      seed: 100,
+      actions: [{ type: 'draw', seat: 0 }, { type: 'riichi', seat: 0, tile: 55 }],
+    })
+    expect(state.riichi).toEqual([true, false, false, false])
+    expect(state.doubleRiichi).toEqual([true, false, false, false])
+  })
+
+  it('double riichi negative: not the seat’s first discard', () => {
+    // Mined (seed 18): seat 0 discards on four prior uneventful turns (no calls
+    // anywhere) before reaching tenpai and declaring riichi on its FIFTH turn —
+    // riichi still fires (closed hand, tenpai, score, live wall all satisfied),
+    // but doubleRiichi must not, since state.ponds[0] is non-empty at declare
+    // time. Never regenerate.
+    const prefix: readonly HandAction[] = [
+      { type: 'draw', seat: 0 }, { type: 'discard', seat: 0, tile: 102 },
+      { type: 'draw', seat: 1 }, { type: 'discard', seat: 1, tile: 133 },
+      { type: 'draw', seat: 2 }, { type: 'discard', seat: 2, tile: 98 },
+      { type: 'draw', seat: 3 }, { type: 'discard', seat: 3, tile: 119 },
+      { type: 'draw', seat: 0 }, { type: 'discard', seat: 0, tile: 86 },
+      { type: 'draw', seat: 1 }, { type: 'discard', seat: 1, tile: 48 },
+      { type: 'draw', seat: 2 }, { type: 'discard', seat: 2, tile: 62 },
+      { type: 'draw', seat: 3 }, { type: 'discard', seat: 3, tile: 83 },
+      { type: 'draw', seat: 0 }, { type: 'discard', seat: 0, tile: 19 },
+      { type: 'draw', seat: 1 }, { type: 'discard', seat: 1, tile: 68 },
+      { type: 'draw', seat: 2 }, { type: 'discard', seat: 2, tile: 31 },
+      { type: 'draw', seat: 3 }, { type: 'discard', seat: 3, tile: 135 },
+      { type: 'draw', seat: 0 }, { type: 'discard', seat: 0, tile: 93 },
+      { type: 'draw', seat: 1 }, { type: 'discard', seat: 1, tile: 128 },
+      { type: 'draw', seat: 2 }, { type: 'discard', seat: 2, tile: 64 },
+      { type: 'draw', seat: 3 }, { type: 'discard', seat: 3, tile: 95 },
+      { type: 'draw', seat: 0 }, { type: 'discard', seat: 0, tile: 6 },
+      { type: 'draw', seat: 1 }, { type: 'discard', seat: 1, tile: 44 },
+      { type: 'draw', seat: 2 }, { type: 'discard', seat: 2, tile: 121 },
+      { type: 'draw', seat: 3 }, { type: 'discard', seat: 3, tile: 120 },
+      { type: 'draw', seat: 0 },
+    ]
+    const state = foldRecord({ seed: 18, actions: [...prefix, { type: 'riichi', seat: 0, tile: 112 }] })
+    expect(state.riichi).toEqual([true, false, false, false])
+    expect(state.doubleRiichi).toEqual([false, false, false, false])
+  })
+
+  it('double riichi negative: a call already folded (seat 1 chis seat 0’s first discard, seat 2 later declares on its own first discard)', () => {
+    // Mined (seed 63): a call happening ANYWHERE before the declaring seat's own
+    // first discard fails the gate, even for a still-closed seat untouched by
+    // that call. This fixture also happens to not be seat 2's first discard
+    // either (four uneventful turns precede it) — both conditions fail here,
+    // which still correctly proves doubleRiichi false; the prior test isolates
+    // the pond-emptiness condition alone. Never regenerate.
+    const prefix: readonly HandAction[] = [
+      { type: 'draw', seat: 0 }, { type: 'discard', seat: 0, tile: 20 },
+      { type: 'chi', seat: 1, tile: 20, uses: [26, 29] }, { type: 'discard', seat: 1, tile: 135 },
+      { type: 'draw', seat: 2 }, { type: 'discard', seat: 2, tile: 72 },
+      { type: 'draw', seat: 3 }, { type: 'discard', seat: 3, tile: 16 },
+      { type: 'draw', seat: 0 }, { type: 'discard', seat: 0, tile: 85 },
+      { type: 'draw', seat: 1 }, { type: 'discard', seat: 1, tile: 122 },
+      { type: 'draw', seat: 2 }, { type: 'discard', seat: 2, tile: 115 },
+      { type: 'draw', seat: 3 }, { type: 'discard', seat: 3, tile: 45 },
+      { type: 'draw', seat: 0 }, { type: 'discard', seat: 0, tile: 111 },
+      { type: 'draw', seat: 1 }, { type: 'discard', seat: 1, tile: 52 },
+      { type: 'draw', seat: 2 }, { type: 'discard', seat: 2, tile: 103 },
+      { type: 'draw', seat: 3 }, { type: 'discard', seat: 3, tile: 3 },
+      { type: 'draw', seat: 0 }, { type: 'discard', seat: 0, tile: 130 },
+      { type: 'draw', seat: 1 }, { type: 'discard', seat: 1, tile: 11 },
+      { type: 'draw', seat: 2 }, { type: 'discard', seat: 2, tile: 33 },
+      { type: 'draw', seat: 3 }, { type: 'discard', seat: 3, tile: 2 },
+      { type: 'draw', seat: 0 }, { type: 'discard', seat: 0, tile: 24 },
+      { type: 'draw', seat: 1 }, { type: 'discard', seat: 1, tile: 28 },
+      { type: 'draw', seat: 2 }, { type: 'discard', seat: 2, tile: 44 },
+      { type: 'draw', seat: 3 }, { type: 'discard', seat: 3, tile: 64 },
+      { type: 'draw', seat: 0 }, { type: 'discard', seat: 0, tile: 134 },
+      { type: 'draw', seat: 1 }, { type: 'discard', seat: 1, tile: 30 },
+      { type: 'draw', seat: 2 },
+    ]
+    const state = foldRecord({ seed: 63, actions: [...prefix, { type: 'riichi', seat: 2, tile: 97 }] })
+    expect(state.riichi).toEqual([false, false, true, false])
+    expect(state.doubleRiichi).toEqual([false, false, false, false])
+  })
+
+  it('ippatsu opens on declare and survives an uninterrupted go-around', () => {
+    const state = foldRecord({
+      seed: 100,
+      actions: [
+        { type: 'draw', seat: 0 }, { type: 'riichi', seat: 0, tile: 55 },
+        { type: 'draw', seat: 1 }, { type: 'discard', seat: 1, tile: 53 },
+        { type: 'draw', seat: 2 }, { type: 'discard', seat: 2, tile: 52 },
+        { type: 'draw', seat: 3 }, { type: 'discard', seat: 3, tile: 82 },
+      ],
+    })
+    expect(state.ippatsu).toEqual([true, false, false, false])
+  })
+
+  it('ippatsu closes on the declaring seat’s own next discard, with no win', () => {
+    const state = foldRecord({
+      seed: 100,
+      actions: [
+        { type: 'draw', seat: 0 }, { type: 'riichi', seat: 0, tile: 55 },
+        { type: 'draw', seat: 1 }, { type: 'discard', seat: 1, tile: 53 },
+        { type: 'draw', seat: 2 }, { type: 'discard', seat: 2, tile: 52 },
+        { type: 'draw', seat: 3 }, { type: 'discard', seat: 3, tile: 82 },
+        { type: 'draw', seat: 0 }, { type: 'discard', seat: 0, tile: 23 },
+      ],
+    })
+    expect(state.ippatsu).toEqual([false, false, false, false])
+  })
+
+  it('ippatsu closes the instant ANY call folds, before the declarer’s own next turn', () => {
+    // Mined (seed 86): seat 0 reaches tenpai and declares on its fourth turn,
+    // then seat 1's very next discard is pon'd by seat 2 — a call by a THIRD
+    // seat, neither the declarer nor the caller's target, still closes the
+    // declarer's window. Never regenerate.
+    const prefix: readonly HandAction[] = [
+      { type: 'draw', seat: 0 }, { type: 'discard', seat: 0, tile: 72 },
+      { type: 'draw', seat: 1 }, { type: 'discard', seat: 1, tile: 34 },
+      { type: 'draw', seat: 2 }, { type: 'discard', seat: 2, tile: 55 },
+      { type: 'draw', seat: 3 }, { type: 'discard', seat: 3, tile: 123 },
+      { type: 'draw', seat: 0 }, { type: 'discard', seat: 0, tile: 126 },
+      { type: 'draw', seat: 1 }, { type: 'discard', seat: 1, tile: 50 },
+      { type: 'draw', seat: 2 }, { type: 'discard', seat: 2, tile: 9 },
+      { type: 'draw', seat: 3 }, { type: 'discard', seat: 3, tile: 6 },
+      { type: 'draw', seat: 0 }, { type: 'discard', seat: 0, tile: 93 },
+      { type: 'draw', seat: 1 }, { type: 'discard', seat: 1, tile: 15 },
+      { type: 'draw', seat: 2 }, { type: 'discard', seat: 2, tile: 4 },
+      { type: 'draw', seat: 3 }, { type: 'discard', seat: 3, tile: 128 },
+      { type: 'draw', seat: 0 }, { type: 'riichi', seat: 0, tile: 35 },
+      { type: 'draw', seat: 1 }, { type: 'discard', seat: 1, tile: 10 },
+    ]
+    const before = foldRecord({ seed: 86, actions: prefix })
+    expect(before.ippatsu).toEqual([true, false, false, false])
+    const after = foldRecord({
+      seed: 86,
+      actions: [...prefix, { type: 'pon', seat: 2, tile: 10, uses: [8, 11] }],
+    })
+    expect(after.ippatsu).toEqual([false, false, false, false])
+  })
+})
+
+describe('win.yaku carries the riichi family (real win-tail fixtures)', () => {
+  it('a plain (non-double) riichi ippatsu tsumo: menzen-tsumo + riichi + ippatsu stack', () => {
+    // Mined (seed 2194): seat 0 declares riichi on its fifth turn (not double —
+    // four prior discards precede it), then tsumos on its very next draw with
+    // the window still open. Never regenerate.
+    const prefix: readonly HandAction[] = [
+      { type: 'draw', seat: 0 }, { type: 'discard', seat: 0, tile: 52 },
+      { type: 'draw', seat: 1 }, { type: 'discard', seat: 1, tile: 2 },
+      { type: 'draw', seat: 2 }, { type: 'discard', seat: 2, tile: 50 },
+      { type: 'draw', seat: 3 }, { type: 'discard', seat: 3, tile: 20 },
+      { type: 'draw', seat: 0 }, { type: 'discard', seat: 0, tile: 122 },
+      { type: 'draw', seat: 1 }, { type: 'discard', seat: 1, tile: 105 },
+      { type: 'draw', seat: 2 }, { type: 'discard', seat: 2, tile: 119 },
+      { type: 'draw', seat: 3 }, { type: 'discard', seat: 3, tile: 66 },
+      { type: 'draw', seat: 0 }, { type: 'discard', seat: 0, tile: 110 },
+      { type: 'draw', seat: 1 }, { type: 'discard', seat: 1, tile: 103 },
+      { type: 'draw', seat: 2 }, { type: 'discard', seat: 2, tile: 112 },
+      { type: 'draw', seat: 3 }, { type: 'discard', seat: 3, tile: 86 },
+      { type: 'draw', seat: 0 }, { type: 'discard', seat: 0, tile: 56 },
+      { type: 'draw', seat: 1 }, { type: 'discard', seat: 1, tile: 11 },
+      { type: 'draw', seat: 2 }, { type: 'discard', seat: 2, tile: 61 },
+      { type: 'draw', seat: 3 }, { type: 'discard', seat: 3, tile: 57 },
+      { type: 'draw', seat: 0 }, { type: 'riichi', seat: 0, tile: 33 },
+      { type: 'draw', seat: 1 }, { type: 'discard', seat: 1, tile: 70 },
+      { type: 'draw', seat: 2 }, { type: 'discard', seat: 2, tile: 36 },
+      { type: 'draw', seat: 3 }, { type: 'discard', seat: 3, tile: 30 },
+      { type: 'draw', seat: 0 },
+    ]
+    const before = foldRecord({ seed: 2194, actions: prefix })
+    expect(before.riichi).toEqual([true, false, false, false])
+    expect(before.doubleRiichi).toEqual([false, false, false, false])
+    expect(before.ippatsu).toEqual([true, false, false, false])
+    const state = foldRecord({ seed: 2194, actions: [...prefix, { type: 'tsumo', seat: 0 }] })
+    expect(state.win!.yaku).toContain('menzen-tsumo')
+    expect(state.win!.yaku).toContain('riichi')
+    expect(state.win!.yaku).not.toContain('double-riichi')
+    expect(state.win!.yaku).toContain('ippatsu')
+  })
+
+  it('a double riichi ippatsu ron: double-riichi + ippatsu stack, never plain riichi', () => {
+    // The RIICHI_SEED anchor (seed 100, declared on seat 0's first action of the
+    // whole hand — double riichi by construction), ronned by seat 0 on seat 2's
+    // discard within the same uninterrupted go-around.
+    const actions: readonly HandAction[] = [
+      { type: 'draw', seat: 0 }, { type: 'riichi', seat: 0, tile: 55 },
+      { type: 'draw', seat: 1 }, { type: 'discard', seat: 1, tile: 53 },
+      { type: 'draw', seat: 2 }, { type: 'discard', seat: 2, tile: 127 },
+    ]
+    const before = foldRecord({ seed: 100, actions })
+    expect(before.doubleRiichi).toEqual([true, false, false, false])
+    expect(before.ippatsu).toEqual([true, false, false, false])
+    const state = foldRecord({ seed: 100, actions: [...actions, { type: 'ron', seat: 0, tile: 127 }] })
+    expect(state.win).toEqual({
+      by: 'ron', winner: 0, from: 2, tile: 127,
+      yaku: ['double-riichi', 'ippatsu', 'chiitoitsu'],
+    })
+  })
+})
+
+describe('ura-dora indicator capture', () => {
+  it('the initial ura indicator is dead[5], paired with the initial dora indicator at dead[4]', () => {
+    const state = foldRecord({ seed: 100, actions: [] })
+    const partition = partitionWall(buildWall(100))
+    expect(state.doraIndicator).toBe(partition.dead[4])
+    expect(state.uraDoraIndicators).toEqual([partition.dead[5]])
+    expect(state.uradora).toEqual([doraKindOf(kindOf(partition.dead[5]))])
+  })
+
+  it('a kan flips its ura-dora indicator one slot past its own dora indicator', () => {
+    // Mined (seed 1240): seat 0's freshly dealt hand already holds all four
+    // copies of one kind — an immediate ankan on turn 1, no search needed.
+    // Independently re-derived from the RAW pre-fold wall (never state.dead,
+    // which has already been shifted by the kan) — the point of this test is
+    // proving the shift-compensated read lines up with the frozen layout.
+    const partition = partitionWall(buildWall(1240))
+    expect(partition.dead[4]).toBe(17) // 5m — the initial dora indicator
+    expect(partition.dead[5]).toBe(56) // 6p — its ura pair
+    expect(partition.dead[6]).toBe(14) // 4m — the 1st kan's dora indicator
+    expect(partition.dead[7]).toBe(13) // 4m — the 1st kan's ura pair
+    const state = foldRecord({
+      seed: 1240,
+      actions: [{ type: 'draw', seat: 0 }, { type: 'ankan', seat: 0, uses: [0, 3, 1, 2] }],
+    })
+    expect(state.doraIndicators).toEqual([17, 14])
+    expect(state.doras).toEqual(['6m', '5m'])
+    expect(state.uraDoraIndicators).toEqual([56, 13])
+    expect(state.uradora).toEqual(['7p', '5m'])
   })
 })
 
