@@ -8,6 +8,7 @@ import { kindOf, rankOf, suitOf, type TileId, type TileKind } from './tiles'
 import { buildWall, partitionWall } from './wall'
 import { doraKindOf } from './dora'
 import { dealHands, SEAT_COUNT, type Seat } from './deal'
+import type { WinYakuName } from './yakuman'
 
 /**
  * The element type of the ordered action log — the engine's action vocabulary.
@@ -204,13 +205,49 @@ export interface TableState {
    */
   drawn: TileId | null
   /**
-   * 'playing' until the discard that follows the draw emptying the live wall lands;
-   * then 'ryuukyoku' (exhaustive draw) — i.e. an ended phase exactly when live is
-   * empty. Kans shorten the live wall (the tail tile replaces the rinshan draw), so
-   * exhaustive draw arrives one discard earlier per kan — through this same
-   * condition. A widenable literal union: agari tickets add winning endings.
+   * Where `drawn` came from, in lockstep with it (null exactly when drawn is null):
+   * 'wall' for an ordinary live-wall draw, 'rinshan' for a kan's replacement draw
+   * (consecutive kans stay 'rinshan' — each kan tail re-stamps it). The tsumo step
+   * reads this as the win's source, which decides menzen-tsumo vs rinshan and the
+   * haitei exclusion (a rinshan win on an emptied wall is rinshan, never haitei).
    */
-  phase: 'playing' | 'ryuukyoku'
+  drawnFrom: 'wall' | 'rinshan' | null
+  /**
+   * 'playing' until an ending lands; 'ryuukyoku' (exhaustive draw) on the discard
+   * that follows the draw emptying the live wall — i.e. live is empty at every
+   * ended phase. Kans shorten the live wall (the tail tile replaces the rinshan
+   * draw), so exhaustive draw arrives one discard earlier per kan — through this
+   * same condition. 'agari' when a tsumo or ron folds (see `win`). Ryuukyoku is
+   * PROVISIONALLY ended: exactly one ron — the houtei ron on the reconstructed
+   * final discard — may still fold it into 'agari'; every other action after any
+   * ended phase throws. A widenable literal union.
+   */
+  phase: 'playing' | 'ryuukyoku' | 'agari'
+  /**
+   * The win an 'agari' phase carries — null exactly while phase is not 'agari'.
+   * `yaku` is yakuOf's list verbatim (deterministic order, the aggregator's
+   * contract), so replaying a log reproduces the identical win by construction.
+   * The winning tile never changes zone: a tsumo's tile stays in `drawn`, a ron's
+   * stays counted in the discarder's pond (the claimed-tile precedent — ponds keep
+   * the complete discard history) — `win.tile` is the mark identifying it there,
+   * and the 136-tile conservation partition is untouched by winning.
+   */
+  win:
+    | {
+        readonly by: 'tsumo'
+        readonly winner: Seat
+        readonly tile: TileId
+        readonly yaku: readonly WinYakuName[]
+      }
+    | {
+        readonly by: 'ron'
+        readonly winner: Seat
+        /** The seat whose discard was claimed for the win. */
+        readonly from: Seat
+        readonly tile: TileId
+        readonly yaku: readonly WinYakuName[]
+      }
+    | null
 }
 
 /** True when the three kinds form a run: one numbered suit, three consecutive ranks. */
@@ -350,6 +387,7 @@ function applyKanTail(state: TableState, kansBefore: number): void {
   state.doraIndicators.push(indicator)
   state.doras.push(doraKindOf(kindOf(indicator)))
   state.drawn = state.dead.shift()!
+  state.drawnFrom = 'rinshan'
   state.dead.push(state.live.pop()!)
 }
 
@@ -465,6 +503,7 @@ function applyAnkan(
   }
   if (!usedDrawn) hand.push(state.drawn)
   state.drawn = null
+  state.drawnFrom = null
   state.melds[seat].push({ type: 'ankan', own: uses })
   applyKanTail(state, kans)
 }
@@ -528,6 +567,7 @@ function applyShouminkan(
     hand.push(state.drawn)
     state.drawn = null
   }
+  state.drawnFrom = null
   melds[at] = {
     type: 'shouminkan',
     claimed: pon.claimed,
@@ -598,6 +638,7 @@ function applyAction(state: TableState, action: HandAction, index: number): void
         throw new RangeError(`action ${index}: draw from an empty live wall`)
       }
       state.drawn = state.live.shift()!
+      state.drawnFrom = 'wall'
       // The draw closes the claim window: the previous discard is now stale.
       state.claimable = null
       return
@@ -627,6 +668,7 @@ function applyAction(state: TableState, action: HandAction, index: number): void
       } else if (action.tile === state.drawn) {
         state.ponds[state.turn].push(action.tile)
         state.drawn = null
+        state.drawnFrom = null
       } else {
         const hand = state.hands[state.turn]
         const at = hand.indexOf(action.tile)
@@ -639,6 +681,7 @@ function applyAction(state: TableState, action: HandAction, index: number): void
         hand.push(state.drawn)
         state.ponds[state.turn].push(action.tile)
         state.drawn = null
+        state.drawnFrom = null
       }
       if (state.live.length === 0) {
         state.phase = 'ryuukyoku'
@@ -705,7 +748,9 @@ export function foldRecord(record: HandRecord): TableState {
     mustDiscard: false,
     turn: 0,
     drawn: null,
+    drawnFrom: null,
     phase: 'playing',
+    win: null,
   }
   record.actions.forEach((action, index) => applyAction(state, action, index))
   return state
