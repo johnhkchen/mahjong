@@ -14,7 +14,7 @@
 
 import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
-import { foldGame, handSeedOf, type GameRecord, type HandAction } from './index'
+import { foldGame, foldRecord, handSeedOf, type GameRecord, type HandAction } from './index'
 
 describe('handSeedOf', () => {
   it('is deterministic', () => {
@@ -672,5 +672,57 @@ describe('guards', () => {
       hands: [midPlay, []],
     }
     expect(() => foldGame(record)).toThrow(RangeError)
+  })
+})
+
+describe('foldGame — the riichi stick pot carries across a ryuukyoku (T-009-01-01)', () => {
+  // GAME_SEED inverts handSeedOf's own bijective formula so hand 0 deals from
+  // seed 100 — record.test.ts's mined closed-tenpai fixture (East's dealt hand
+  // plus its first draw is tenpai-preserving on tile 55). `riichiTsumogiriToEnd`
+  // replays East declaring riichi on that draw, then tsumogiri to whatever end
+  // the wall reaches — deterministic from the deal, like every other tsumogiri
+  // helper in this codebase; the resulting facts (ryuukyoku, pot 1000, scores)
+  // are cross-checked against foldGame directly at capture time. Never
+  // regenerate GAME_SEED or hand-edit the resulting action count.
+  const GAME_SEED = 2654435797
+
+  function riichiTsumogiriToEnd(seed: number): HandAction[] {
+    let actions: HandAction[] = [
+      { type: 'draw', seat: 0 },
+      { type: 'riichi', seat: 0, tile: 55 },
+    ]
+    for (;;) {
+      let state = foldRecord({ seed, actions })
+      if (state.phase !== 'playing') return actions
+      const seat = state.turn
+      actions = [...actions, { type: 'draw', seat }]
+      state = foldRecord({ seed, actions })
+      if (state.phase !== 'playing') return actions
+      actions = [...actions, { type: 'discard', seat, tile: state.drawn! }]
+    }
+  }
+
+  const hand0 = riichiTsumogiriToEnd(100)
+
+  it('hand 0 ends in ryuukyoku with East the sole tenpai seat (riichi paid for itself); the stick rides into hand 1 as GameState.pot and table.pot alike', () => {
+    const record: GameRecord = { seed: GAME_SEED, hands: [hand0, []] }
+    const game = foldGame(record)
+    // Noten-bappu, 1 tenpai (East): +3000/-1000 each, then East's own stick
+    // (-1000) nets +2000 on top of the standard 25000 start.
+    expect(game.scores).toEqual([27000, 24000, 24000, 24000])
+    // A ryuukyoku always rotates the dealer (module header) — East's own stick
+    // is unclaimed, so it carries forward as hand 1's incoming pot.
+    expect(game.dealer).toBe(1)
+    expect(game.pot).toBe(1000)
+    expect(game.table.pot).toBe(1000)
+    // Hand 1's starting scores, Seat-remapped from the rotated dealer (Player 1
+    // now sits engine Seat 0): scoresIn[s] = scores[(1 + s) % 4].
+    expect(game.table.scoresIn).toEqual([24000, 24000, 24000, 27000])
+  })
+
+  it('a fresh single-hand game (no riichi ever folded) carries no pot and the default starting scoresIn', () => {
+    const game = foldGame({ seed: DEALER_WIN_GAME_SEED, hands: [HAND0_DEALER_WIN.slice(0, 4)] })
+    expect(game.pot).toBe(0)
+    expect(game.table.scoresIn).toEqual([25000, 25000, 25000, 25000])
   })
 })

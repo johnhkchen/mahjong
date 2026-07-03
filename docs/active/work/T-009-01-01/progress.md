@@ -16,7 +16,7 @@ Tracking plan.md's 8 steps. Updated as each completes.
   necessarily finalizes an unrelated in-flight thread's T-008-03-01 work
   (`ScoreBreakdown`/`scoreBreakdownOf`, already fully implemented, tested, and
   passing, just uncommitted) — see progress notes below for why.
-- [ ] Step 6 — game.ts: thread scoresIn/potIn/pot
+- [x] Step 6 — game.ts: thread scoresIn/potIn/pot
 - [ ] Step 7 — seatview.ts: expose riichi/pot
 - [ ] Step 8 — full-suite confirmation pass
 

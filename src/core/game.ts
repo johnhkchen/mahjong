@@ -69,6 +69,12 @@ export interface GameState {
    * seats to Players via `dealer`: engine seat s is player (dealer + s) % SEAT_COUNT.
    */
   readonly table: TableState
+  /**
+   * The riichi stick pot riding into/through the active hand (T-009-01-01) —
+   * `table.pot` verbatim, exposed here for symmetry with `scores`/`dealer`/
+   * `seatWinds`: 0 unless some hand in this game has ever carried a riichi.
+   */
+  readonly pot: number
 }
 
 /** Starting score for every seat — the standard riichi convention (25000 each). */
@@ -156,10 +162,22 @@ export function foldGame(record: GameRecord): GameState {
     STARTING_SCORE,
     STARTING_SCORE,
   ]
+  // The riichi stick pot carried hand-to-hand (T-009-01-01) — 0 for a fresh game,
+  // reset to 0 after any hand a winner takes it from, else carried unclaimed.
+  let pot = 0
   let table: TableState | undefined
   for (let index = 0; index < record.hands.length; index++) {
     const isLast = index === record.hands.length - 1
-    const state = foldRecord({ seed: handSeedOf(record.seed, index), actions: record.hands[index] })
+    // Seat-remap THIS hand's starting scores from the running Player-indexed
+    // total, via the same playerOfSeat formula the delta-application below runs
+    // in the opposite direction — the riichi ≥1000 gate's own input.
+    const scoresIn = [0, 1, 2, 3].map(
+      (seat) => scores[playerOfSeat(dealer, seat as Seat)],
+    ) as [number, number, number, number]
+    const state = foldRecord(
+      { seed: handSeedOf(record.seed, index), actions: record.hands[index] },
+      { scoresIn, potIn: pot },
+    )
     if (state.phase === 'playing') {
       if (!isLast) {
         throw new RangeError(
@@ -174,9 +192,10 @@ export function foldGame(record: GameRecord): GameState {
       scores[playerOfSeat(dealer, seat as Seat)] += deltas[seat]
     }
     table = state
+    pot = state.phase === 'agari' ? 0 : state.pot
     if (isLast) break
     const dealerWon = state.phase === 'agari' && state.win!.winner === 0
     dealer = dealerWon ? dealer : nextPlayer(dealer)
   }
-  return { scores, dealer, seatWinds: seatWindsOf(dealer), table: table! }
+  return { scores, dealer, seatWinds: seatWindsOf(dealer), table: table!, pot: table!.pot }
 }
