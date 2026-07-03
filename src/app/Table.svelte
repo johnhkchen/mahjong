@@ -141,14 +141,22 @@
     --ink-dim: #a8c7b8;
 
     display: grid;
+    /* Portrait phone bands, one wind→area mapping as ever: West across the top,
+       the two side opponents flanking the center info card, the player's whole
+       zone as the full-width bottom band. Rows size to content; the 1fr middle
+       absorbs the min-height slack so a freshly dealt table still reads as felt. */
     grid-template-areas:
-      '. west .'
+      'west west west'
       'north center south'
-      '. east .';
-    grid-template-columns: 1fr 2fr 1fr;
-    grid-template-rows: 1fr 2fr 1fr;
-    aspect-ratio: 1;
-    width: min(100%, 70dvh);
+      'east east east';
+    grid-template-columns: 1fr 7.5rem 1fr;
+    grid-template-rows: auto 1fr auto;
+    row-gap: 0.4rem;
+    width: 100%;
+    max-width: 26rem;
+    min-height: min(60dvh, 30rem);
+    box-sizing: border-box;
+    padding: 0.4rem 0.2rem;
     background: var(--felt);
     border: 0.5rem solid var(--felt-edge);
     border-radius: 1.25rem;
@@ -160,6 +168,7 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
+    min-width: 0; /* a grid track can never be blown out past its share */
     gap: 0.15rem;
     font-size: 0.85rem;
     letter-spacing: 0.06em;
@@ -209,10 +218,12 @@
   }
 
   /* An empty pond keeps one tile row of height so the felt grid doesn't jump
-     as the first discards land. */
+     as the first discards land. Width comes from the seat's band or track — the
+     full-width bands hold a mid-hand pond in one glanceable row, the narrow side
+     tracks wrap North's and South's at four tiles. */
   .pond {
     min-height: 1.6em;
-    max-width: 9.5rem;
+    max-width: 100%;
   }
 
   /* A pond tile claimed away: still counted, visibly taken. */
@@ -293,10 +304,13 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
+    align-self: center; /* hug content mid-band, don't stretch the 1fr row */
+    min-width: 0;
     gap: 0.5rem;
     border: 1px solid var(--felt-edge);
     border-radius: 0.75rem;
-    margin: 12%;
+    margin: 0;
+    padding: 0.5rem 0.25rem;
   }
   .dora {
     display: flex;
