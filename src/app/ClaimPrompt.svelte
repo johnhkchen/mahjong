@@ -116,18 +116,26 @@
     gap: 0.4rem;
   }
 
+  /* Call/pass are thumb targets too: a 44px (2.75rem) height floor and tiles
+     scaled a notch above pond size so the choice reads at arm's length. */
   .call,
   .pass {
     display: inline-flex;
     align-items: center;
     gap: 0.3rem;
-    padding: 0.3rem 0.6rem;
+    min-height: 2.75rem;
+    padding: 0.4rem 0.8rem;
     background: #1e6b4e;
     border: 1px solid #2e7d4f;
     border-radius: 0.5rem;
     color: #eaf3ee;
     font: inherit;
     cursor: pointer;
+    touch-action: manipulation;
+  }
+
+  .call {
+    --tile-scale: 1rem;
   }
 
   .call .name {

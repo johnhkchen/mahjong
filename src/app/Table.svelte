@@ -152,6 +152,7 @@
     grid-template-columns: 1fr 7.5rem 1fr;
     grid-template-rows: auto 1fr auto;
     row-gap: 0.4rem;
+    flex: 1 1 auto; /* in App's column the felt fills the viewport — the east band bottoms out into the thumb zone */
     width: 100%;
     max-width: 26rem;
     min-height: min(60dvh, 30rem);
@@ -217,6 +218,13 @@
     text-transform: none;
   }
 
+  /* The hand is the tap zone: chips scale up to a readable face and the 44px
+     button pitch below provides the spacing, so the flex gap goes to zero. */
+  .hand {
+    --tile-scale: 1.5rem;
+    gap: 0;
+  }
+
   /* An empty pond keeps one tile row of height so the felt grid doesn't jump
      as the first discards land. Width comes from the seat's band or track — the
      full-width bands hold a mid-hand pond in one glanceable row, the narrow side
@@ -257,17 +265,26 @@
   }
 
   .drawn {
+    --tile-scale: 1.5rem;
     margin-top: 0.25rem;
     text-transform: none;
   }
 
-  /* Tap targets carry no chrome of their own — the tile chip stays the visual unit. */
+  /* Tap targets carry no chrome of their own — the tile chip stays the visual
+     unit — but the button is the target: a 44px (2.75rem) minimum in both axes,
+     chip centered, so every discard is one-thumb tappable. */
   .tap {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 2.75rem;
+    min-height: 2.75rem;
     padding: 0;
     background: none;
     border: none;
     font: inherit;
     cursor: pointer;
+    touch-action: manipulation;
   }
 
   .ended {

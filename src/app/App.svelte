@@ -92,17 +92,22 @@
        one); the tsumo and houtei moments have none and the prompt renders
        headerless. canPass hides the pass at the tsumo point only — declining a
        tsumo IS tapping a discard on the table below. -->
-  {#if (prompt.length > 0 || win !== null) && !dismissed}
-    <ClaimPrompt
-      claimed={table.claimable?.tile ?? null}
-      choices={prompt}
-      {win}
-      canPass={win?.type !== 'tsumo'}
-      onclaim={claim}
-      onpass={pass}
-      onwin={takeWin}
-    />
-  {/if}
+  <!-- The console: an always-reserved slot at the very bottom of the thumb zone,
+       so a one-row prompt appears without moving the hand above it. Visibility
+       stays the owner's fact — the {#if} merely lives inside the slot now. -->
+  <div class="console">
+    {#if (prompt.length > 0 || win !== null) && !dismissed}
+      <ClaimPrompt
+        claimed={table.claimable?.tile ?? null}
+        choices={prompt}
+        {win}
+        canPass={win?.type !== 'tsumo'}
+        onclaim={claim}
+        onpass={pass}
+        onwin={takeWin}
+      />
+    {/if}
+  </div>
 </main>
 
 <style>
@@ -112,16 +117,34 @@
     color-scheme: dark;
   }
 
+  /* A pinned column, not a centered float: header up top, the felt stretching
+     to fill (its own flex: 1), the console slot at the bottom edge — so the
+     hand and prompt live in the thumb zone on any viewport height. Narrow side
+     padding buys the 7-tiles-per-row hand at 360px; the bottom edge respects
+     the iOS home-indicator inset. */
   main {
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
-    gap: 1rem;
+    justify-content: flex-start;
+    gap: 0.5rem;
     min-height: 100dvh;
-    padding: 1rem;
+    padding: 1rem 0.5rem max(0.5rem, env(safe-area-inset-bottom));
     box-sizing: border-box;
     font-family: system-ui, sans-serif;
+  }
+
+  /* The reserved prompt slot: min-height, never height — a stacked multi-choice
+     window may grow it, the common one-row prompt never shifts the hand. */
+  .console {
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    width: 100%;
+    max-width: 26rem;
+    /* Sized to a one-row prompt exactly (44px button + prompt padding/border,
+       measured 66px) — the common window opens without moving the hand above. */
+    min-height: 4.25rem;
   }
 
   header {

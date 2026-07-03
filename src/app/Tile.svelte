@@ -324,8 +324,10 @@
   .tile {
     display: inline-flex;
     position: relative;
-    /* The chip's em basis — the size the whole table was tuned around. */
-    font-size: 0.8rem;
+    /* The chip's em basis — the size the whole table was tuned around. A zone
+       that needs bigger tiles (the thumb-zone hand) sets --tile-scale; the
+       default keeps every other chip at the settled size. */
+    font-size: var(--tile-scale, 0.8rem);
   }
 
   .chip {
