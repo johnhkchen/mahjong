@@ -23,6 +23,7 @@
     type ClaimChoice,
   } from './drive'
   import ClaimPrompt from './ClaimPrompt.svelte'
+  import { term } from './dictionary.svelte'
   import RiichiPrompt from './RiichiPrompt.svelte'
   import Table from './Table.svelte'
 
@@ -206,7 +207,7 @@
     {:else if riichi !== null}
       <RiichiPrompt tile={riichi.tile} ondeclare={declareRiichi} ondecline={declineRiichi} />
     {:else if hint !== null}
-      <p class="hint">{hint} away from tenpai</p>
+      <p class="hint">{hint} away from {term('tenpai')}</p>
     {/if}
   </div>
 </main>
