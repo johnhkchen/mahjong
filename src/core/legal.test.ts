@@ -17,11 +17,14 @@ import {
   LIVE_WALL_SIZE,
   SEAT_COUNT,
   buildWall,
+  createRng,
   dealHands,
   foldRecord,
   kindOf,
   legalActions,
+  nextInt,
   partitionWall,
+  shanten,
   type HandAction,
   type HandRecord,
   type Seat,
@@ -283,6 +286,84 @@ const ANCHORS: ReadonlyArray<{ label: string; seed: number; actions: readonly Ha
   { label: 'seed-67 mustDiscard', seed: 67, actions: [...kanPrefix67, PON67] },
 ]
 
+/**
+ * The riichi-eager driver (T-009-01-04), duplicated from dynamics.test.ts's own copy
+ * — this file's own established convention (this file already duplicates `keyOf`
+ * from dynamics.test.ts, and `tsumogiriRecord`/`dealtLive`/`dealtDead` back the other
+ * way; no shared test-utils module exists anywhere in src/core/). At a claim window
+ * or houtei, any offered ron wins unconditionally, else the full offered set is
+ * sampled uniformly by index; at an own-turn point, an offered tsumo wins
+ * unconditionally, else the FIRST offered riichi, else the plain draw when nothing
+ * else is offered, else the shanten-minimizing discard (rng-broken among ties) — the
+ * mechanical tenpai-seeking fallback that reaches real riichi declarations often
+ * enough for a small corpus to be non-vacuous, without reaching for policy.ts (this
+ * file, like dynamics.test.ts, drives legality directly rather than through a bot).
+ */
+
+/** The vocabulary's own action bound (dynamics.test.ts's ACTION_BOUND, restated). */
+const ACTION_BOUND_RIICHI = 2 * FULL_TURNS + 2 * 4 * SEAT_COUNT + 2
+
+function bestDiscardOf(
+  state: TableState,
+  offers: readonly HandAction[],
+  rng: ReturnType<typeof createRng>,
+): HandAction {
+  const seat = state.turn
+  let best: HandAction[] = []
+  let bestShanten = Infinity
+  for (const action of offers) {
+    if (action.type !== 'discard') continue
+    const pool = state.drawn === null ? state.hands[seat] : [...state.hands[seat], state.drawn]
+    const after = shanten(pool.filter((t) => t !== action.tile).map(kindOf), state.melds[seat])
+    if (after < bestShanten) {
+      bestShanten = after
+      best = [action]
+    } else if (after === bestShanten) {
+      best.push(action)
+    }
+  }
+  return best[nextInt(rng, best.length)]
+}
+
+function playRiichiEager(seed: number): HandRecord {
+  const rng = createRng(seed)
+  const actions: HandAction[] = []
+  for (;;) {
+    const state = foldRecord({ seed, actions })
+    const legal = legalActions(state)
+    if (legal.length === 0) return { seed, actions }
+    const isCallPoint =
+      state.phase === 'ryuukyoku' ||
+      (state.drawn === null && !state.mustDiscard && state.claimable !== null)
+    let chosen: HandAction
+    if (isCallPoint) {
+      const ron = legal.find((a) => a.type === 'ron')
+      chosen = ron ?? legal[nextInt(rng, legal.length)]
+    } else {
+      const tsumo = legal.find((a) => a.type === 'tsumo')
+      const riichi = legal.find((a) => a.type === 'riichi')
+      const draw = legal.find((a) => a.type === 'draw')
+      chosen = tsumo ?? riichi ?? draw ?? bestDiscardOf(state, legal, rng)
+    }
+    actions.push(chosen)
+    if (actions.length > ACTION_BOUND_RIICHI) {
+      throw new Error(
+        `seed ${seed}: riichi-eager driver exceeded ${ACTION_BOUND_RIICHI} actions — the turn loop is not terminating`,
+      )
+    }
+  }
+}
+
+/**
+ * The riichi-agreement corpus: a contiguous seed range, widened from an initial
+ * `[0, 12)` plan (progress.md) after a scratchpad scan found too few riichi-bearing
+ * seeds there — `[0, 16)` carries 5 riichi-bearing seeds, both endings represented.
+ */
+const RIICHI_AGREEMENT_SEEDS: readonly number[] = Array.from({ length: 16 }, (_, i) => i)
+const riichiAgreementCorpus: readonly HandRecord[] = RIICHI_AGREEMENT_SEEDS.map((seed) =>
+  playRiichiEager(seed),
+)
+
 describe('the set is the closed form', () => {
   it('pre-draw: the turn seat’s draw leads; every further offer rons or claims the open window, rons first (property)', () => {
     fc.assert(
@@ -442,6 +523,23 @@ describe('offered actions fold', () => {
           () => foldRecord({ seed, actions: [...actions, action] }),
           `${label}: offered ${keyOf(action)}`,
         ).not.toThrow()
+      }
+    }
+  })
+
+  it('every offered action folds, over every prefix of the riichi-eager corpus (T-009-01-04)', () => {
+    // The existing property above walks tsumogiri-only prefixes (prefixArb never
+    // declares riichi); this generalizes the SAME claim — offered ⇒ folds — to
+    // states the riichi corpus actually reaches: mid-riichi-window, locked, and
+    // post-ippatsu-break points included, non-vacuously (riichi offers genuinely
+    // appear among many of these prefixes' own legalActions() sets).
+    for (const { seed, actions } of riichiAgreementCorpus) {
+      for (let len = 0; len <= actions.length; len++) {
+        const prefix = actions.slice(0, len)
+        const state = foldRecord({ seed, actions: prefix })
+        for (const action of legalActions(state)) {
+          expect(() => foldRecord({ seed, actions: [...prefix, action] })).not.toThrow()
+        }
       }
     }
   })

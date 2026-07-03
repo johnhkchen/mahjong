@@ -27,9 +27,12 @@ import {
   createRng,
   dealHands,
   foldRecord,
+  kindOf,
   legalActions,
   nextInt,
   partitionWall,
+  scoreBreakdownOf,
+  shanten,
   type HandAction,
   type HandRecord,
   type Seat,
@@ -205,6 +208,92 @@ const WIN_CARRIER_SEEDS: readonly number[] = [277, 360, 626, 834, 876, 950, 1072
 const winCorpus: readonly HandRecord[] = WIN_CARRIER_SEEDS.map((seed) => playWinEager(seed))
 
 /**
+ * The riichi-eager driver's own mechanical tie-break (T-009-01-04): among the
+ * offered `discard`-type actions for the turn seat — 14 when unlocked, exactly one
+ * (the drawn tile) when already locked, `legalActions`' own two shapes, no branch
+ * needed here — pick the one minimizing post-discard shanten, rng-broken among ties
+ * via the same seeded stream every driver in this file already threads through
+ * `nextInt`. Arithmetic over `shanten` (core vocabulary `legal.ts`'s own
+ * `riichiOffers` already calls directly), not a policy import: this file's own
+ * header declares bots out of scope for its generators ("a later epic with their own
+ * shape") — this stays inside that boundary while still reaching tenpai reliably
+ * enough for a small corpus to be non-vacuous.
+ */
+function bestDiscardOf(
+  state: TableState,
+  offers: readonly HandAction[],
+  rng: ReturnType<typeof createRng>,
+): HandAction {
+  const seat = state.turn
+  let best: HandAction[] = []
+  let bestShanten = Infinity
+  for (const action of offers) {
+    if (action.type !== 'discard') continue
+    const pool = state.drawn === null ? state.hands[seat] : [...state.hands[seat], state.drawn]
+    const after = shanten(pool.filter((t) => t !== action.tile).map(kindOf), state.melds[seat])
+    if (after < bestShanten) {
+      bestShanten = after
+      best = [action]
+    } else if (after === bestShanten) {
+      best.push(action)
+    }
+  }
+  return best[nextInt(rng, best.length)]
+}
+
+/**
+ * The riichi-eager driver (T-009-01-04): at a claim window or houtei, any offered
+ * ron wins unconditionally, else the full offered set is sampled uniformly by index
+ * (`playWinEager`'s own call-point rule, verbatim) — this also exercises open-hand
+ * riichi-ineligibility for free, since an accepted claim melds and permanently bars
+ * `isMenzen`. At an own-turn point: an offered tsumo wins unconditionally, else the
+ * FIRST offered riichi (declaring the moment tenpai is reachable), else the plain
+ * draw when nothing else is offered (a claimless pre-draw point), else
+ * `bestDiscardOf`'s shanten-minimizing choice. A locked seat's own-turn point needs
+ * no special case: its only offers are the forced discard and, maybe, a tsumo —
+ * `tsumo ?? riichi ?? draw ?? bestDiscardOf` resolves correctly through the same
+ * four-way fallback everyone else uses.
+ */
+function playRiichiEager(seed: number): HandRecord {
+  const rng = createRng(seed)
+  const actions: HandAction[] = []
+  for (;;) {
+    const state = foldRecord({ seed, actions })
+    const legal = legalActions(state)
+    if (legal.length === 0) return { seed, actions }
+    const isCallPoint =
+      state.phase === 'ryuukyoku' ||
+      (state.drawn === null && !state.mustDiscard && state.claimable !== null)
+    let chosen: HandAction
+    if (isCallPoint) {
+      const ron = legal.find((a) => a.type === 'ron')
+      chosen = ron ?? legal[nextInt(rng, legal.length)]
+    } else {
+      const tsumo = legal.find((a) => a.type === 'tsumo')
+      const riichi = legal.find((a) => a.type === 'riichi')
+      const draw = legal.find((a) => a.type === 'draw') // plain "must draw," no window
+      chosen = tsumo ?? riichi ?? draw ?? bestDiscardOf(state, legal, rng)
+    }
+    actions.push(chosen)
+    if (actions.length > ACTION_BOUND) {
+      throw new Error(
+        `seed ${seed}: riichi-eager driver exceeded ${ACTION_BOUND} actions — the turn loop is not terminating`,
+      )
+    }
+  }
+}
+
+/**
+ * The riichi corpus: a contiguous seed range (the `GAME_SEEDS` precedent), sized so
+ * the shanten-minimizing driver above reaches real riichi declarations, on both
+ * endings, without needing a mined/frozen non-contiguous list — confirmed by a
+ * scratchpad scan at authoring time (T-009-01-04's own progress.md): 10 of these 30
+ * seeds actually declare riichi, 7 ending in agari and 3 in ryuukyoku.
+ */
+const RIICHI_CORPUS_SEEDS: readonly number[] = Array.from({ length: 30 }, (_, i) => i)
+const riichiCorpus: readonly HandRecord[] = RIICHI_CORPUS_SEEDS.map((seed) => playRiichiEager(seed))
+
+/**
  * The six-zone flatten of a state — hands, melds' own tiles, ponds, the held-apart
  * drawn tile, live, dead: the zones TableState documents as partitioning the 136
  * tile ids at all times. A meld contributes only its `own` tiles; the claimed tile
@@ -321,8 +410,18 @@ const fullGameArb = fc
 /** An fc handle on the call-dense corpus, for the claim-hungry mutation operators. */
 const corpusGameArb = fc.nat(greedyCorpus.length - 1).map((i) => greedyCorpus[i])
 
-/** Random-legal or corpus: operators that need claims in the log sample from both. */
-const anyGameArb = fc.oneof(gameArb, corpusGameArb)
+/**
+ * An fc handle on the riichi corpus (T-009-01-04) — widens every existing consumer
+ * of `anyGameArb` (seat bump, type flip, retargets, duplicate) with genuinely
+ * riichi-bearing, locked-seat, open-hand trajectories, and — with no new `it` needed
+ * — strengthens `'fold determinism over random play'` below to cover riichi-bearing
+ * records too: that test already asserts exactly the "re-folds are deeply equal"
+ * property this ticket's AC names.
+ */
+const riichiCorpusGameArb = fc.nat(riichiCorpus.length - 1).map((i) => riichiCorpus[i])
+
+/** Random-legal or corpus: operators that need claims or riichi in the log sample from all three. */
+const anyGameArb = fc.oneof(gameArb, corpusGameArb, riichiCorpusGameArb)
 
 describe('conservation over random play', () => {
   it('hands + melds + ponds + drawn + live + dead partition the 136 tile ids at every prefix (property)', () => {
@@ -579,6 +678,24 @@ describe('mutated sequences throw', () => {
     )
   })
 
+  it('riichi retarget: a discard turned into a riichi declaration outside the offered set throws (property)', () => {
+    fc.assert(
+      fc.property(anyGameArb, fc.nat(), ({ seed, actions }, at) => {
+        const discards = actions.flatMap((a, i) => (a.type === 'discard' ? [[a, i] as const] : []))
+        fc.pre(discards.length > 0)
+        const [action, i] = discards[at % discards.length]
+        const mutant: HandAction = { type: 'riichi', seat: action.seat, tile: action.tile }
+        // Declaring riichi on the SAME tile a plain discard was legal for is only
+        // itself legal when the seat is unlocked, closed, funded, and this exact
+        // tile leaves tenpai — the tile-retarget precedent's filter, applied to a
+        // type change instead of a tile change.
+        const offered = legalActions(foldRecord({ seed, actions: actions.slice(0, i) }))
+        fc.pre(!offered.some((a) => keyOf(a) === keyOf(mutant)))
+        assertMutantThrows(seed, actions.slice(0, i), mutant, actions.slice(i + 1))
+      }),
+    )
+  })
+
   it('stale claim: a claim delayed past the next draw throws (property)', () => {
     fc.assert(
       fc.property(anyGameArb, fc.nat(), ({ seed, actions }, at) => {
@@ -611,7 +728,7 @@ describe('mutated sequences throw', () => {
     fc.assert(
       fc.property(
         fullGameArb,
-        fc.nat(6),
+        fc.nat(7),
         fc.nat(SEAT_COUNT - 1),
         fc.nat(TILE_COUNT - 1),
         fc.array(fc.nat(TILE_COUNT - 1), { minLength: 4, maxLength: 4 }),
@@ -622,6 +739,7 @@ describe('mutated sequences throw', () => {
           const menu: HandAction[] = [
             { type: 'draw', seat },
             { type: 'discard', seat, tile },
+            { type: 'riichi', seat, tile },
             { type: 'chi', seat, tile, uses: [u[0], u[1]] },
             { type: 'pon', seat, tile, uses: [u[0], u[1]] },
             { type: 'daiminkan', seat, tile, uses: [u[0], u[1], u[2]] },
@@ -692,6 +810,7 @@ describe('wins over random play', () => {
         const menu: HandAction[] = [
           { type: 'draw', seat },
           { type: 'discard', seat, tile },
+          { type: 'riichi', seat, tile },
           { type: 'chi', seat, tile, uses: [uses[0], uses[1]] },
           { type: 'pon', seat, tile, uses: [uses[0], uses[1]] },
           { type: 'daiminkan', seat, tile, uses: [uses[0], uses[1], uses[2]] },
@@ -704,6 +823,73 @@ describe('wins over random play', () => {
           assertMutantThrows(record.seed, record.actions, mutant, [])
         }
       }
+    }
+  })
+})
+
+describe('riichi over random play (T-009-01-04)', () => {
+  // T-009-01-01/02/03 landed the mechanic (lock, stick/pot, yaku pricing, furiten);
+  // this suite is the dedicated property pass over RANDOM-LEGAL trajectories that
+  // actually declare it, closing the gap T-009-01-02's own review.md named: "this
+  // ticket's fixtures intentionally do not attempt [randomized riichi play]."
+
+  it('the riichi-eager corpus reaches real declarations, both endings, within the action bound', () => {
+    let riichiBearing = 0
+    const endings = new Set<TableState['phase']>()
+    for (const record of riichiCorpus) {
+      expect(record.actions.length).toBeLessThanOrEqual(ACTION_BOUND)
+      const state = foldRecord(record)
+      // Every driven game reaches a real end — ryuukyoku or agari — never stalls.
+      expect(['agari', 'ryuukyoku']).toContain(state.phase)
+      if (record.actions.some((a) => a.type === 'riichi')) {
+        riichiBearing += 1
+        endings.add(state.phase)
+      }
+    }
+    // Non-vacuity, the greedyCorpus/winCorpus precedent: a zeroed tally must widen
+    // the corpus, never weaken the check.
+    expect(riichiBearing).toBeGreaterThan(0)
+    expect(endings).toContain('agari')
+    expect(endings).toContain('ryuukyoku')
+  })
+
+  it("every locked seat's own discard equals its drawn tile, read from the prior fold (property over the corpus)", () => {
+    // Restated independently of record.ts's own enforcement (which THROWS on a
+    // tedashi discard from a locked seat, so a corpus built exclusively from
+    // legalActions could never demonstrate a violation either way): for every
+    // discard in the log, fold the state immediately BEFORE it and read that prior
+    // state's own riichi/drawn fields — the exact inputs the discard chose against,
+    // the same "prior fold's fields are ground truth" idiom assertMutantThrows uses
+    // throughout this file.
+    for (const { seed, actions } of riichiCorpus) {
+      for (let i = 0; i < actions.length; i++) {
+        const action = actions[i]
+        if (action.type !== 'discard') continue
+        const prior = foldRecord({ seed, actions: actions.slice(0, i) })
+        if (prior.riichi[action.seat]) {
+          expect(action.tile).toBe(prior.drawn)
+        }
+      }
+    }
+  })
+
+  it("scores plus the carried pot conserve to 4 x STARTING_SCORE at every corpus ending, restated from game.ts's own carry rule (property over the corpus)", () => {
+    // scoreBreakdownOf's `scores` field assumes the fresh-game default context
+    // (25000 each, no carried pot in) that foldRecord({ seed, actions }) — every
+    // driver in this suite — always uses. The corrected, pot-aware conservation law
+    // settlement.ts's own header names: an agari's winner already absorbed the
+    // WHOLE pot into their delta (nothing carries to a next hand); a ryuukyoku
+    // leaves it sitting in state.pot, unclaimed. game.ts's own foldGame states
+    // exactly this carry rule for real multi-hand chaining (`pot = state.phase ===
+    // 'agari' ? 0 : state.pot`) — restated here, independently, for the
+    // single-hand case: scores plus whatever pot would carry into a next hand must
+    // sum to the table's fixed total, always.
+    for (const record of riichiCorpus) {
+      const state = foldRecord(record)
+      const breakdown = scoreBreakdownOf(state)
+      const carriedPot = state.phase === 'agari' ? 0 : state.pot
+      const total = breakdown.scores.reduce((a, b) => a + b, 0) + carriedPot
+      expect(total).toBe(4 * 25_000)
     }
   })
 })

@@ -1,8 +1,10 @@
 <script lang="ts">
   import {
     foldGame,
+    furitenSeal,
     legalActions,
     seatView,
+    yakulessTenpai,
     type GameRecord,
     type HandAction,
     type TileId,
@@ -79,6 +81,14 @@
   // shanten 0 regardless).
   const riichi = $derived(riichiPrompt(table, offered, PLAYER))
   const hint = $derived(riichi === null ? tenpaiHint(seatView(table, PLAYER)) : null)
+  // The furiten badge and yakuless notice (T-009-03-02) — ambient "why can't I
+  // win" facts, true across many turns rather than at one decision point, so
+  // they render inside Table (near the hand) rather than the console's
+  // turn-gated cascade above. Both read straight off `table`, the same way
+  // `riichiPrompt`/`winChoice` already do — core's own exported queries, no
+  // computation of either fact happens here.
+  const furitenTile = $derived(furitenSeal(table, PLAYER))
+  const yakuless = $derived(yakulessTenpai(table, PLAYER))
 
   // Pacing is presentation: one forced action per tick keeps ponds and the wall
   // counter landing visibly, action by action, instead of a whole bot round at once.
@@ -173,7 +183,7 @@
     <span>mahjong</span>
     <button class="new-game" onclick={newGame}>new game</button>
   </header>
-  <Table {table} ontap={tap} scores={seatScores} onnext={newHand} />
+  <Table {table} ontap={tap} scores={seatScores} onnext={newHand} {furitenTile} yakulessTenpai={yakuless} />
   <!-- Visibility is the drive predicate family: claim choices or the win offer.
        The claimed tile is the window's when one is open (a claim offer implies
        one); the tsumo and houtei moments have none and the prompt renders

@@ -23,6 +23,13 @@
 // — and narrowing the fold now would invalidate stored logs it accepted before.
 // Everywhere else, offered ⇔ folds still holds exactly; the win-offer agreement
 // suite (legal.win.test.ts) pins the asymmetry from both sides, for all three kinds.
+//
+// T-009-03-02 exports two "why can't I win" teaching queries alongside this
+// doctrine: furitenSeal (the physical discard behind whichever of the three
+// furiten kinds applies) and yakulessTenpai (a closed, tenpai hand whose ron
+// would carry no yaku right now). Extend-only, like legalActions itself —
+// neither changes the furiten divergence or the offered set; both merely
+// surface facts the gate above already withholds silently.
 
 import { kindOf, rankOf, suitOf, type TileId, type TileKind } from './tiles'
 import { SEAT_COUNT, type Seat } from './deal'
@@ -156,6 +163,56 @@ function ronOffers(state: TableState, discarder: Seat, tile: TileId): HandAction
     offers.push({ type: 'ron', seat, tile })
   }
   return offers
+}
+
+/**
+ * The physical discard currently sealing `seat`'s ron, or null when the seat is
+ * not furiten by any of the three gates ronOffers ORs together — the "why
+ * can't I ron" teaching fact ronOffers' gate never surfaces on its own
+ * (T-009-03-02). Own pond first (BASIC furiten, discardFuriten's own test,
+ * restated to return the tile instead of a boolean): the first tile in
+ * `state.ponds[seat]` whose kind is a current wait. Only when that finds
+ * nothing does the scan widen to the other three ponds, rotation order from
+ * `seat`, and ONLY when `tempFuriten`/`riichiFuriten` is set — sound because
+ * sealPassedWins (record.ts) only ever seals those two from ANOTHER seat's
+ * discard, never this seat's own, so a same-kind tile sitting in another
+ * seat's pond is never mistaken for a seal that never happened. A temp/riichi
+ * seal set before an intervening CALL reshaped this seat's waits (record.ts
+ * clears tempFuriten only on this seat's own next draw, never on a call) can
+ * return null even while ron stays sealed — a rare, documented gap: the
+ * fold-tracked flag stays authoritative for ronOffers regardless; this query
+ * only loses its ability to NAME the tile, never the seal itself.
+ */
+export function furitenSeal(state: TableState, seat: Seat): TileId | null {
+  const seatWaits = new Set(waits(state.hands[seat].map(kindOf), state.melds[seat]))
+  const ownSeal = state.ponds[seat].find((tile) => seatWaits.has(kindOf(tile)))
+  if (ownSeal !== undefined) return ownSeal
+  if (!state.tempFuriten[seat] && !state.riichiFuriten[seat]) return null
+  for (let k = 1; k < SEAT_COUNT; k++) {
+    const other = ((seat + k) % SEAT_COUNT) as Seat
+    const sealed = state.ponds[other].find((tile) => seatWaits.has(kindOf(tile)))
+    if (sealed !== undefined) return sealed
+  }
+  return null
+}
+
+/**
+ * True when `seat` is closed, not yet locked into riichi, holds at least one
+ * wait, and EVERY one of those waits would complete with no yaku by ron right
+ * now — the "no yaku, riichi would fix this" teaching fact (T-009-03-02).
+ * `menzenTsumo` (yaku.ts) is unconditional for a closed self-draw, so such a
+ * hand always still wins by tsumo regardless: no separate tsumo probe is
+ * needed to license that half of the notice's copy. False once locked
+ * (riichi is itself a yaku — the notice is moot, tenpaiHint's own early-out)
+ * or open (riichi is unavailable — riichiOffers' own isMenzen gate — so the
+ * "riichi would fix this" framing no longer holds).
+ */
+export function yakulessTenpai(state: TableState, seat: Seat): boolean {
+  if (state.riichi[seat]) return false
+  if (!isMenzen(state.melds[seat])) return false
+  const seatWaits = waits(state.hands[seat].map(kindOf), state.melds[seat])
+  if (seatWaits.length === 0) return false
+  return seatWaits.every((kind) => winYaku(state, seat, kind, 'discard').length === 0)
 }
 
 /**

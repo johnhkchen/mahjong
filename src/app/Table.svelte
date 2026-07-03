@@ -18,11 +18,21 @@
     ontap,
     scores,
     onnext,
+    furitenTile,
+    yakulessTenpai,
   }: {
     table: TableState
     ontap?: (tile: TileId) => void
     scores?: readonly [number, number, number, number]
     onnext?: () => void
+    /**
+     * The player's furiten-sealing discard (core's furitenSeal, T-009-03-02),
+     * or null/absent — a pre-computed fact, like every other prop here: Table
+     * reads it, it never calls waits/yakuOf itself.
+     */
+    furitenTile?: TileId | null
+    /** The player's yakuless-tenpai fact (core's yakulessTenpai, T-009-03-02). */
+    yakulessTenpai?: boolean
   } = $props()
 
   // Seat 0 (East) is the player. Stable copy-sort into canonical kind order via the
@@ -111,6 +121,20 @@
               <Tile id={table.drawn} />
             </button>
           </span>
+        {/if}
+        <!-- Ambient "why can't I win" facts (T-009-03-02): true across many turns,
+             not just at a decision point, so they render here rather than the
+             console slot's turn-gated cascade (App.svelte). Both are pre-computed
+             values in — this component derives neither. -->
+        {#if furitenTile != null}
+          <p class="furiten" aria-label="furiten">
+            振聴 — ron is sealed on <Tile id={furitenTile} />; tsumo still wins
+          </p>
+        {/if}
+        {#if yakulessTenpai}
+          <p class="yakuless" aria-label="yakuless tenpai">
+            no yaku — this hand can only win by tsumo; riichi would fix this
+          </p>
         {/if}
       {/if}
     </div>
@@ -263,6 +287,21 @@
     --tile-scale: 1.5rem;
     margin-top: 0.25rem;
     text-transform: none;
+  }
+
+  /* Same register as App.svelte's shanten hint: a bare line, no chrome — an
+     ambient fact, not a call to action. */
+  .furiten,
+  .yakuless {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    margin: 0.35rem 0 0;
+    padding: 0;
+    font-size: 0.7rem;
+    letter-spacing: 0.04em;
+    text-transform: none;
+    color: var(--ink-dim);
   }
 
   /* Tap targets carry no chrome of their own — the tile chip stays the visual
