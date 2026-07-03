@@ -13,8 +13,8 @@ import App from './App.svelte'
 import ClaimPrompt from './ClaimPrompt.svelte'
 import Table from './Table.svelte'
 
-// The walking-skeleton boot seed in App.svelte. If the app's seed changes, this is the
-// one place the test learns about it.
+// The suite's pinned seed: App now boots on a random seed (or a `?seed=` URL pin), so
+// deterministic renders pass it explicitly as the initialSeed prop.
 const BOOT_SEED = 1
 
 /**
@@ -54,7 +54,7 @@ function tsumogiriTurns(live: readonly TileId[], n: number): HandAction[] {
 }
 
 describe('dealt-table view (SSR)', () => {
-  const { body } = render(App)
+  const { body } = render(App, { props: { initialSeed: BOOT_SEED } })
   const table = foldRecord({ seed: BOOT_SEED, actions: [] })
 
   it('renders exactly the 13 dealt tiles and the dora indicator, derived via the core fold', () => {

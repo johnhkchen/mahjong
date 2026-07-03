@@ -13,9 +13,24 @@
   import ClaimPrompt from './ClaimPrompt.svelte'
   import Table from './Table.svelte'
 
-  // Arbitrary walking-skeleton seed (it matches the frozen golden vector in
-  // wall.test.ts). Seed selection becomes a real feature with the game-start ticket.
-  let seed = $state(1)
+  // A fresh table per visit: the seed is drawn at boot (or pinned by a `?seed=` URL
+  // param — a seeded link reproduces the exact game, the bug-report contract), and
+  // redrawn by the new-game button. Determinism is untouched: the record still carries
+  // its seed; only WHICH seed boots is random. Tests pin `initialSeed` as a prop.
+  function drawSeed(): number {
+    return Math.floor(Math.random() * 0x100000000) >>> 0
+  }
+  function bootSeed(): number {
+    if (typeof location !== 'undefined') {
+      const pinned = Number(new URLSearchParams(location.search).get('seed'))
+      if (Number.isFinite(pinned) && pinned > 0) return pinned >>> 0
+    }
+    return drawSeed()
+  }
+  const { initialSeed = bootSeed() }: { initialSeed?: number } = $props()
+  // svelte-ignore state_referenced_locally — initial capture is the intent: the prop
+  // seeds the first game; newGame() owns every later value.
+  let seed = $state(initialSeed)
   // The app's authoritative state is the hand record — the seed plus this growing
   // action log. Appends only; everything on the table is re-derived by folding after
   // every append (architecture.md: the table DOM is small, re-render is cheap), and
@@ -69,6 +84,14 @@
     if (settled !== null) actions.push(settled)
   }
 
+  // End the current game and deal a fresh one: a new seed, an empty log, the houtei
+  // dismissal lowered. Everything else re-derives from the fold.
+  function newGame() {
+    seed = drawSeed()
+    actions = []
+    dismissed = false
+  }
+
   // The reactive fixed point that runs the table: each append re-folds and re-derives
   // `offered`, which re-runs this effect — draws (the player's included) and the
   // bots' policy decisions (discards, calls, wins) land one per tick until
@@ -85,7 +108,10 @@
 </script>
 
 <main>
-  <header>mahjong</header>
+  <header>
+    <span>mahjong</span>
+    <button class="new-game" onclick={newGame}>new game</button>
+  </header>
   <Table {table} ontap={tap} />
   <!-- Visibility is the drive predicate family: claim choices or the win offer.
        The claimed tile is the window's when one is open (a claim offer implies
@@ -148,9 +174,31 @@
   }
 
   header {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
     color: #a8c7b8;
     font-size: 0.9rem;
     letter-spacing: 0.2em;
     text-transform: uppercase;
+  }
+
+  /* Same visual register as the header wordmark, but a real ≥44px touch target
+     (padding carries the hit area; the border keeps it discoverable as a control). */
+  .new-game {
+    font: inherit;
+    font-size: 0.75rem;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: #a8c7b8;
+    background: none;
+    border: 1px solid #3d5c4c;
+    border-radius: 0.375rem;
+    padding: 0.65rem 0.9rem;
+    min-height: 44px;
+    cursor: pointer;
+  }
+  .new-game:active {
+    background: #1c3a2c;
   }
 </style>
