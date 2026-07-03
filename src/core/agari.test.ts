@@ -6,8 +6,12 @@
 // (core is "big in tests" by design). Fixture expected values are derived in comments
 // from the rules, never from module output.
 
+import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
 import {
+  COPIES_PER_KIND,
+  KIND_COUNT,
+  TILE_KINDS,
   decomposeAgari,
   isAgari,
   kindIndexOf,
@@ -377,5 +381,166 @@ describe('contract', () => {
   it('isAgari is the emptiness read of decomposeAgari', () => {
     expect(isAgari(h('123m456p789s111z22z'), [])).toBe(true)
     expect(isAgari(h('89m1p234p567s111z22z'), [])).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Property agreement with the reference over randomized hands, meld arity 0–4.
+// Two distributions: CONSTRUCTED winners (dense positives — random hands almost
+// never win, so the positive side needs building) and random multiset draws
+// (dense negatives with the occasional accidental win). Plus one-tile
+// perturbations of winners for near-miss negatives.
+// ---------------------------------------------------------------------------
+
+/** Every legal 3-tile set as kind indices: 34 triplets, then 21 runs. */
+const SET_CANDIDATES: readonly (readonly number[])[] = [
+  ...Array.from({ length: KIND_COUNT }, (_, k) => [k, k, k]),
+  ...Array.from({ length: 27 }, (_, k) => k)
+    .filter((k) => k % 9 <= 6)
+    .map((k) => [k, k+ 1, k + 2]),
+]
+
+/**
+ * Deterministic winner construction: each choice indexes (mod) the candidates
+ * still legal under the 4-copy cap, so no rejection loop is needed — a triplet of
+ * some untouched kind is always available (at most 12 tiles touch at most 12 of
+ * the 34 kinds). The pair choice indexes kinds with 2+ copies of headroom.
+ */
+function buildWinner(meldCount: number, setChoices: readonly number[], pairChoice: number): TileKind[] {
+  const counts = new Array<number>(KIND_COUNT).fill(0)
+  const hand: TileKind[] = []
+  for (let s = 0; s < 4 - meldCount; s++) {
+    const legal = SET_CANDIDATES.filter((tiles) =>
+      tiles.every((k) => counts[k] + tiles.filter((x) => x === k).length <= COPIES_PER_KIND),
+    )
+    const picked = legal[setChoices[s] % legal.length]
+    for (const k of picked) {
+      counts[k] += 1
+      hand.push(TILE_KINDS[k])
+    }
+  }
+  const pairable = Array.from({ length: KIND_COUNT }, (_, k) => k).filter(
+    (k) => counts[k] + 2 <= COPIES_PER_KIND,
+  )
+  const pairKind = pairable[pairChoice % pairable.length]
+  hand.push(TILE_KINDS[pairKind], TILE_KINDS[pairKind])
+  return hand
+}
+
+const meldCountArb = fc.integer({ min: 0, max: 4 })
+
+const winnerArb = fc
+  .record({
+    meldCount: meldCountArb,
+    setChoices: fc.array(fc.nat(10_000), { minLength: 4, maxLength: 4 }),
+    pairChoice: fc.nat(10_000),
+  })
+  .map(({ meldCount, setChoices, pairChoice }) => ({
+    meldCount,
+    hand: buildWinner(meldCount, setChoices, pairChoice),
+  }))
+
+/** The 136-tile multiset as kinds — the draw pool for random hands. */
+const POOL: readonly TileKind[] = TILE_KINDS.flatMap((kind) => [kind, kind, kind, kind])
+
+const randomHandArb = meldCountArb.chain((meldCount) =>
+  fc.record({
+    meldCount: fc.constant(meldCount),
+    hand: fc.shuffledSubarray([...POOL], {
+      minLength: 14 - 3 * meldCount,
+      maxLength: 14 - 3 * meldCount,
+    }),
+  }),
+)
+
+/** A winner with one tile swapped for any kind with copy headroom — near misses. */
+const perturbedArb = fc
+  .record({ winner: winnerArb, at: fc.nat(13), replaceWith: fc.nat(10_000) })
+  .map(({ winner, at, replaceWith }) => {
+    const hand = [...winner.hand]
+    const dropped = hand.splice(at % hand.length, 1)[0]
+    const counts = new Array<number>(KIND_COUNT).fill(0)
+    for (const kind of hand) counts[kindIndexOf(kind)] += 1
+    const kinds = Array.from({ length: KIND_COUNT }, (_, k) => k).filter(
+      (k) => counts[k] < COPIES_PER_KIND,
+    )
+    hand.push(TILE_KINDS[kinds[replaceWith % kinds.length]])
+    return { meldCount: winner.meldCount, hand, dropped }
+  })
+
+/** Kind counts of a hand — the re-expansion comparison basis. */
+function countsOfHand(kinds: readonly TileKind[]): number[] {
+  const counts = new Array<number>(KIND_COUNT).fill(0)
+  for (const kind of kinds) counts[kindIndexOf(kind)] += 1
+  return counts
+}
+
+/** Re-expand a standard reading to kind counts: the pair plus every set's tiles. */
+function expandStandard(decomposition: Extract<AgariDecomposition, { form: 'standard' }>): number[] {
+  const counts = new Array<number>(KIND_COUNT).fill(0)
+  counts[kindIndexOf(decomposition.pair)] += 2
+  for (const set of decomposition.sets) {
+    if (set.type === 'triplet') {
+      counts[kindIndexOf(set.kind)] += 3
+    } else {
+      const start = kindIndexOf(set.start)
+      counts[start] += 1
+      counts[start + 1] += 1
+      counts[start + 2] += 1
+    }
+  }
+  return counts
+}
+
+describe('agreement with the brute-force reference', () => {
+  it('constructed winners respect the wall (generator self-test)', () => {
+    fc.assert(
+      fc.property(winnerArb, ({ meldCount, hand }) => {
+        expect(hand.length).toBe(14 - 3 * meldCount)
+        expect(Math.max(...countsOfHand(hand))).toBeLessThanOrEqual(COPIES_PER_KIND)
+      }),
+      { numRuns: 200 },
+    )
+  })
+
+  it('finds every reading of a constructed winner, and only those', () => {
+    fc.assert(
+      fc.property(winnerArb, ({ meldCount, hand }) => {
+        const result = expectAgreement(hand, meldCount)
+        // Anti-vacuity: winners are winners — the construction guarantees a
+        // standard reading, so empty agreement can never silently pass here.
+        expect(result.length).toBeGreaterThan(0)
+        // Every standard reading re-expands to exactly the queried tiles.
+        const counts = countsOfHand(hand)
+        for (const decomposition of result) {
+          if (decomposition.form === 'standard') {
+            expect(expandStandard(decomposition)).toEqual(counts)
+          }
+        }
+      }),
+      { numRuns: 300 }, // the positive-dense side of the AC's property suite
+    )
+  })
+
+  it('agrees on random multiset draws (negative-dense)', () => {
+    fc.assert(
+      fc.property(randomHandArb, ({ meldCount, hand }) => {
+        const result = expectAgreement(hand, meldCount)
+        // Special forms demand full concealment: never reported alongside melds.
+        if (meldCount > 0) {
+          expect(result.every((decomposition) => decomposition.form === 'standard')).toBe(true)
+        }
+      }),
+      { numRuns: 300 },
+    )
+  })
+
+  it('agrees on one-tile perturbations of winners (near misses)', () => {
+    fc.assert(
+      fc.property(perturbedArb, ({ meldCount, hand }) => {
+        expectAgreement(hand, meldCount)
+      }),
+      { numRuns: 200 },
+    )
   })
 })
