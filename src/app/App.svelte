@@ -20,12 +20,15 @@
     tapDiscard,
     tenpaiHint,
     winChoice,
+    windowOutcome,
     type ClaimChoice,
+    type WindowOutcome,
   } from './drive'
   import ClaimPrompt from './ClaimPrompt.svelte'
   import { activeTerminology, setTerminology, term, type Terminology } from './dictionary.svelte'
   import RiichiPrompt from './RiichiPrompt.svelte'
   import Table from './Table.svelte'
+  import WindowNotice from './WindowNotice.svelte'
 
   // A fresh table per visit: the seed is drawn at boot (or pinned by a `?seed=` URL
   // param — a seeded link reproduces the exact game, the bug-report contract), and
@@ -84,6 +87,19 @@
   // (the hand is already provisionally ended), so the pass tap just lowers the
   // prompt. Never authoritative, never reset — a single hand ends there either way.
   let dismissed = $state(false)
+  // The E-011 outcome notice (T-011-02-01): who actually took a window the player
+  // tapped into and lost, or null when there is nothing to report (the tap won, the
+  // player passed, or the auto-dismiss timer below has cleared it). Never derived
+  // from `table`/`offered` — it describes an event that already happened, so it is
+  // assigned explicitly by claim()/pass()/takeWin() below, the only three places a
+  // window resolves. windowOutcome (drive.ts) does the one comparison; this file
+  // only renders whatever it returns.
+  let notice = $state<WindowOutcome | null>(null)
+  // A readable beat, deliberately longer than the 750ms the claim-window-race
+  // fixture's own reopened window can arrive in (docs/active/work/T-011-02-01/
+  // design.md) — long enough that the cascade below (claim prompt > notice), not
+  // this timer, is what preempts a still-live notice when a fresh window reopens.
+  const NOTICE_DURATION_MS = 2000
   // The riichi decision point (T-009-03-01) — "you're tenpai, declare riichi?" — and
   // the pre-tenpai teaching hint, both pure reads over the same seatView; riichiPrompt
   // already defers to `win` on its own (drive.ts's own guard), and `hint` is gated
@@ -140,18 +156,23 @@
     if (action === null) return
     const settled = settleWindow(table, offered, PLAYER, action)
     if (settled !== null) activeHand().push(settled)
+    notice = windowOutcome(action, settled)
   }
 
   function pass() {
     const settled = settleWindow(table, offered, PLAYER, null)
     if (settled !== null) activeHand().push(settled)
     else dismissed = true // nothing to fold — the houtei dismissal
+    // A decline is never a lost tap (there was no tap) — clear any notice left
+    // over from an earlier window rather than let it survive into this one.
+    notice = null
   }
 
   function takeWin() {
     if (win === null) return
     const settled = settleWindow(table, offered, PLAYER, win)
     if (settled !== null) activeHand().push(settled)
+    notice = windowOutcome(win, settled)
   }
 
   // Both riichi buttons fold one of drive.ts's own riichiPrompt pair directly — no
@@ -177,8 +198,11 @@
     hands.push([])
     // Presentation state is per-hand: a houtei dismissal from the ENDED hand must
     // not hide the next hand's prompts (pre-E-008 this flag never outlived a hand;
-    // with continuation it did — the gummed-notifications bug).
+    // with continuation it did — the gummed-notifications bug). `notice` gets the
+    // identical reset for the identical reason — a lost-window notice from the
+    // hand that just ended has nothing to say about the next one.
     dismissed = false
+    notice = null
   }
 
   // End the current GAME and start a fresh one: a new seed, a single empty hand,
@@ -190,6 +214,7 @@
     gameSeed = drawSeed()
     hands = [[]]
     dismissed = false
+    notice = null
   }
 
   // The reactive fixed point that runs the table: each append re-folds and re-derives
@@ -203,6 +228,20 @@
     const action = forcedAction(table, offered, PLAYER)
     if (action === null) return
     const timer = setTimeout(() => activeHand().push(action), BOT_DELAY_MS)
+    return () => clearTimeout(timer)
+  })
+
+  // The notice's own readable beat: independent of the pacing effect above (the
+  // table keeps advancing underneath regardless of what the console shows) — this
+  // just clears `notice` after NOTICE_DURATION_MS so it never lingers once nothing
+  // higher in the cascade is preempting it. Re-runs whenever `notice` changes,
+  // including to null (where it's a no-op), so a fresh notice always gets its own
+  // full beat rather than inheriting a partially-elapsed timer.
+  $effect(() => {
+    if (notice === null) return
+    const timer = setTimeout(() => {
+      notice = null
+    }, NOTICE_DURATION_MS)
     return () => clearTimeout(timer)
   })
 </script>
@@ -228,6 +267,15 @@
   <!-- The console: an always-reserved slot at the very bottom of the thumb zone,
        so a one-row prompt appears without moving the hand above it. Visibility
        stays the owner's fact — the {#if} merely lives inside the slot now. -->
+  <!-- The four-tier cascade (T-011-02-01): claim prompt > outcome notice > riichi
+       prompt > tenpai hint. A live decision (a claim/win offer) always preempts a
+       still-showing notice — never hide an urgent tap behind a transient toast, and
+       a fresh window's own claim prompt is exactly what makes a stale notice from
+       the PRIOR window stop rendering, well before its own timer would clear it
+       (claim-window-race.tap.svelte.test.ts's reopened-window assertion exercises
+       this directly). A notice, in turn, always preempts the ordinary per-turn
+       cascade beneath it — the player learns what just happened before being asked
+       what's next. riichi/hint keep their prior relative order, unchanged. -->
   <div class="console">
     {#if (prompt.length > 0 || win !== null) && !dismissed}
       <!-- Keyed on the window's own identity (claimable seat+tile) so a new window
@@ -244,6 +292,8 @@
           onwin={takeWin}
         />
       {/key}
+    {:else if notice !== null}
+      <WindowNotice outcome={notice} />
     {:else if riichi !== null}
       <RiichiPrompt tile={riichi.tile} ondeclare={declareRiichi} ondecline={declineRiichi} />
     {:else if hint !== null}

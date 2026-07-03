@@ -225,6 +225,52 @@ export function settleWindow(
     : null
 }
 
+/** The call forms a window can resolve to when someone OTHER than the asker wins it —
+ *  never 'draw' (unreachable from a non-null `chosen`, see windowOutcome) and never
+ *  'tsumo' (a bot never reaches a tsumo through callPolicy; a tsumo point and an open
+ *  claim window are mutually exclusive states). */
+export type CallType = 'chi' | 'pon' | 'daiminkan' | 'ron'
+
+function isCallType(type: HandAction['type']): type is CallType {
+  return type === 'chi' || type === 'pon' || type === 'daiminkan' || type === 'ron'
+}
+
+/**
+ * The fact a lost window leaves behind: who actually took it, and with what — set
+ * beside `playerType`, the call/win the PLAYER tapped and lost. Never built when the
+ * player's own tap won (the ordinary, silent case) or when nothing was tapped at all
+ * (a decline never reaches this — see windowOutcome).
+ */
+export interface WindowOutcome {
+  readonly winner: Seat
+  readonly winnerType: CallType
+  readonly playerType: CallType | 'tsumo'
+}
+
+function isPlayerTapType(type: HandAction['type']): type is CallType | 'tsumo' {
+  return isCallType(type) || type === 'tsumo'
+}
+
+/**
+ * The console's one comparison of "what I tapped" against "what settleWindow actually
+ * pushed" — null exactly when there is nothing to report: `settled` is null (only
+ * reachable from a declined window, which never calls this at all — App.svelte's
+ * `pass()` doesn't), or `settled` IS `chosen` (reference equality, not shape: `chosen`
+ * is always an `offered` element by construction — tapClaim/winChoice results, never
+ * built locally — and settleWindow seeds its own `best` as `chosen` before consulting
+ * any bot, so `===` is the exact, cheap test for "the player's own tap won"). A
+ * defensive `isCallType` guard keeps `winnerType` narrow even though, by the settled-
+ * seat invariant above, `settled` can only ever be a call/ron here.
+ */
+export function windowOutcome(
+  chosen: HandAction,
+  settled: HandAction | null,
+): WindowOutcome | null {
+  if (settled === null || settled === chosen || !isCallType(settled.type)) return null
+  if (!isPlayerTapType(chosen.type)) return null
+  return { winner: settled.seat, winnerType: settled.type, playerType: chosen.type }
+}
+
 /**
  * The player's win offer — the tsumo on his own draw, or the ron on the window (or
  * reconstructed houtei) discard — an element of `offered` itself, or null when no

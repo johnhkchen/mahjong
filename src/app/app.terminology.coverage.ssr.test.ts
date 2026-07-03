@@ -18,11 +18,12 @@ import {
   type HandAction,
   type TileId,
 } from '../core'
-import { PLAYER, promptChoices, riichiPrompt, winChoice } from './drive'
+import { PLAYER, promptChoices, riichiPrompt, winChoice, type WindowOutcome } from './drive'
 import { setTerminology, type TermKey, type Terminology } from './dictionary.svelte'
 import ClaimPrompt from './ClaimPrompt.svelte'
 import RiichiPrompt from './RiichiPrompt.svelte'
 import Table from './Table.svelte'
+import WindowNotice from './WindowNotice.svelte'
 
 const TERMINOLOGIES: readonly Terminology[] = ['romaji', 'zh-hant']
 
@@ -194,6 +195,29 @@ for (const terminology of TERMINOLOGIES) {
           },
         })
         expect(body).toContain(`aria-label="${t.ron} 8m"`)
+      })
+    })
+
+    describe('outcome notice', () => {
+      it('names the winner and both call types — a hand-built South-pon-beats-East-chi outcome', () => {
+        setTerminology(terminology)
+        // Matches drive.test.ts's own seed-3 race fixture (South's pon outranks
+        // East's chi) — not re-derived here, this file renders components in
+        // isolation like every other describe block above.
+        const outcome: WindowOutcome = { winner: 1, winnerType: 'pon', playerType: 'chi' }
+        const { body } = render(WindowNotice, { props: { outcome } })
+        expect(body).toContain(`>${t.south}<`)
+        expect(body).toContain(`>${t.pon}<`)
+        expect(body).toContain(`>${t.chi}<`)
+      })
+
+      it('labels a daiminkan winner as kan', () => {
+        setTerminology(terminology)
+        const outcome: WindowOutcome = { winner: 2, winnerType: 'daiminkan', playerType: 'pon' }
+        const { body } = render(WindowNotice, { props: { outcome } })
+        expect(body).toContain(`>${t.west}<`)
+        expect(body).toContain(`>${t.kan}<`)
+        expect(body).toContain(`>${t.pon}<`)
       })
     })
 

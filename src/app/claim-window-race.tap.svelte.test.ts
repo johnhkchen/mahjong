@@ -112,11 +112,10 @@ describe('the mixed claim-window race (seed 344)', () => {
     firstCalls[0]!.click()
     flushSync()
 
-    // DEFECT: the window closed (the prompt is gone — settleWindow resolved to
-    // SOMETHING), but the fold went to West, not the player: West holds a fresh
-    // meld and North's discard wears the claimed mark, while the player's own
-    // hand is untouched. Nothing in the DOM — no text, no separate element —
-    // names West or "pon" as what actually happened to the tap.
+    // The window closed (the prompt is gone — settleWindow resolved to SOMETHING),
+    // and the fold went to West, not the player: West holds a fresh meld and
+    // North's discard wears the claimed mark, while the player's own hand is
+    // untouched.
     expect(claimPrompt(target)).toBeNull()
     expect(target.querySelectorAll('[aria-label="your hand"] button')).toHaveLength(
       handTilesBefore,
@@ -124,9 +123,14 @@ describe('the mixed claim-window race (seed 344)', () => {
     const westMelds = target.querySelector('[aria-label="west melds"]')
     expect(westMelds).not.toBeNull()
     expect(westMelds!.querySelector('[aria-label="claimed 8m from north"]')).not.toBeNull()
-    // The only place West's win is legible at all is reading the table state
-    // directly — there is no dedicated outcome notice anywhere in the render.
-    expect(target.querySelector('.notice, .outcome, [role="alert"], [aria-live]')).toBeNull()
+    // FIXED (T-011-02-01): the lost tap now names what happened — an outcome
+    // notice (App.svelte's `notice` state, drive.ts's windowOutcome) says who took
+    // the window and with what, and what the player's own tap was.
+    const notice = target.querySelector('.notice')
+    expect(notice).not.toBeNull()
+    expect(notice!.querySelector('[aria-label="winner"]')!.textContent).toBe('West')
+    expect(notice!.querySelector('[aria-label="winning call"]')!.textContent).toBe('pon')
+    expect(notice!.querySelector('[aria-label="your call"]')!.textContent).toBe('chi')
 
     // West owes its claim discard, North draws and discards next — and THAT
     // discard opens a second window for the player: same call type (chi), same
@@ -158,5 +162,13 @@ describe('the mixed claim-window race (seed 344)', () => {
     expect(secondPromptNode.className).toBe(firstPromptNode.className)
     expect(secondPromptNode).not.toBe(firstPromptNode)
     expect(firstPromptNode.isConnected).toBe(false)
+
+    // Cascade priority (T-011-02-01, App.svelte: claim prompt > outcome notice >
+    // riichi prompt > hint): the first window's notice has a 2000ms readable beat
+    // (App.svelte's NOTICE_DURATION_MS) — comfortably longer than the 750ms this
+    // reopen took — so it is still logically live right now. The console shows the
+    // fresh claim prompt anyway: a live decision always preempts a still-showing
+    // notice, never the reverse.
+    expect(target.querySelector('.notice')).toBeNull()
   }, 20_000)
 })

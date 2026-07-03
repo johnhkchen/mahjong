@@ -1,7 +1,7 @@
 <script lang="ts">
   import { kindOf, type HandAction, type TileId } from '../core'
   import type { ClaimChoice } from './drive'
-  import { term } from './dictionary.svelte'
+  import { callTerm } from './dictionary.svelte'
   import Tile from './Tile.svelte'
 
   // The call/pass prompt: pure input wiring, computation-free. `choices` is
@@ -37,13 +37,6 @@
     onpass?: () => void
     onwin?: () => void
   } = $props()
-
-  // Parlor vocabulary for the button face: a daiminkan is called "kan" at the table.
-  // The payload keeps the record's discriminant — display only. Routed through the term
-  // dictionary (T-010-01-01) so the label follows the active terminology.
-  function callName(type: ClaimChoice['type'] | 'tsumo' | 'ron'): string {
-    return term(type === 'daiminkan' ? 'kan' : type)
-  }
 </script>
 
 <aside class="prompt" role="group" aria-label="call or pass">
@@ -57,10 +50,10 @@
       <button
         type="button"
         class="call win"
-        aria-label={win.type === 'ron' ? `${callName('ron')} ${kindOf(win.tile)}` : callName('tsumo')}
+        aria-label={win.type === 'ron' ? `${callTerm('ron')} ${kindOf(win.tile)}` : callTerm('tsumo')}
         onclick={() => onwin?.()}
       >
-        <span class="name">{callName(win.type)}</span>
+        <span class="name">{callTerm(win.type)}</span>
         {#if win.type === 'ron'}<Tile id={win.tile} />{/if}
       </button>
     {/if}
@@ -71,12 +64,12 @@
         <button
           type="button"
           class="call"
-          aria-label="{callName(choice.type)} {kindOf(choice.tile)} with {choice.uses
+          aria-label="{callTerm(choice.type)} {kindOf(choice.tile)} with {choice.uses
             .map(kindOf)
             .join(' ')}"
           onclick={() => onclaim?.({ type: choice.type, uses: choice.uses })}
         >
-          <span class="name">{callName(choice.type)}</span>
+          <span class="name">{callTerm(choice.type)}</span>
           {#each choice.uses as id (id)}<Tile {id} />{/each}
         </button>
       {/if}

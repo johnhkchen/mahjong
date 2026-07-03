@@ -109,3 +109,20 @@ const SEAT_TERMS: readonly TermKey[] = ['east', 'south', 'west', 'north']
 export function windTerm(seat: number): string {
   return term(SEAT_TERMS[seat])
 }
+
+const CALL_TERM_KEYS: Record<'chi' | 'pon' | 'daiminkan' | 'ron' | 'tsumo', TermKey> = {
+  chi: 'chi',
+  pon: 'pon',
+  daiminkan: 'kan',
+  ron: 'ron',
+  tsumo: 'tsumo',
+}
+
+/** A claim/win type's table name — a daiminkan is called "kan" at the table (the
+ *  record's own discriminant is untouched; this is display only). Shared by
+ *  ClaimPrompt (the call/pass buttons) and WindowNotice (T-011-02-01's outcome
+ *  notice) so the same call type always reads as the same word in both places,
+ *  under either terminology. */
+export function callTerm(type: 'chi' | 'pon' | 'daiminkan' | 'ron' | 'tsumo'): string {
+  return term(CALL_TERM_KEYS[type])
+}

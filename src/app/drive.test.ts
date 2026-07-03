@@ -38,6 +38,7 @@ import {
   tapDiscard,
   tenpaiHint,
   winChoice,
+  windowOutcome,
 } from './drive'
 
 // The frozen anchor seed shared with the other suites (wall golden vector, App boot).
@@ -508,6 +509,34 @@ describe('settleWindow', () => {
         ).toBe(true)
       }
     }
+  })
+})
+
+describe('windowOutcome', () => {
+  it("names South and pon as the winner when the player's tapped chi loses — seed 3", () => {
+    const offered = legalActions(raceWindow3)
+    const chi = tapClaim(offered, PLAYER, EAST_CHI_A)!
+    const settled = settleWindow(raceWindow3, offered, PLAYER, chi)
+    expect(windowOutcome(chi, settled)).toEqual({ winner: 1, winnerType: 'pon', playerType: 'chi' })
+  })
+
+  it("returns null when the player's own tap wins the window outright — seed 15", () => {
+    const offered = legalActions(mixedWindow15)
+    const pon = tapClaim(offered, PLAYER, { type: 'pon', uses: [44, 47] })!
+    const settled = settleWindow(mixedWindow15, offered, PLAYER, pon)
+    expect(windowOutcome(pon, settled)).toBeNull()
+  })
+
+  it('returns null when the tsumo settles to itself — no bot offer coexists with a tsumo point', () => {
+    const offered = legalActions(tsumoPoint)
+    const win = winChoice(offered, PLAYER)!
+    expect(windowOutcome(win, settleWindow(tsumoPoint, offered, PLAYER, win))).toBeNull()
+  })
+
+  it('returns null when settled is null — the declined-window/houtei-dismissal shape', () => {
+    const offered = legalActions(houteiEnd)
+    const ron = winChoice(offered, PLAYER)!
+    expect(windowOutcome(ron, null)).toBeNull()
   })
 })
 
