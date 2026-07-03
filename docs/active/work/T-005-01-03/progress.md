@@ -18,12 +18,26 @@
     tests (open dragons fire, ankan keeps menzen).
   - Suite green: 291 tests, check clean.
 
+- **Step 2 — set-structure predicates** (committed): pinfu (completesRyanmen
+  arithmetic), iipeikou/ryanpeikou (disjoint via peikouCount), sanshoku doujun/
+  doukou, ittsuu, chanta/junchan (disjoint family clauses), toitoi, sanankou
+  (concealedTripletCount with the ron-absorption adjustment), sankantsu,
+  shousangen — table now 27/27, catalog order. 12 CASES rows with rule-derived
+  near-miss negatives. 315 tests green.
+- **Step 3 — totality + interactions + contract** (committed): CASES tightened
+  to the total `Record<YakuName, YakuCase>` (compiler enforces the AC), catalog
+  meta-test (27 names, distinct, frozen); interaction tests: ryanpeikou-not-
+  iipeikou, chanta-family pairwise exclusivity (+ honroutou/toitoi co-fire),
+  honroutou-over-chiitoitsu, double-east wind double-fire, pinfu wait shapes
+  (penchan ×2 / tanki / ryanmen low / ryanmen high / otakaze pair / seat-wind
+  pair), sanankou ron absorption both directions, rinshan-not-haitei, yakuless
+  open completion → [], kokushi → []; contract tests: exact catalog-order
+  result list on a five-yaku hand, purity (unmutated inputs, repeat-call
+  equality, fresh arrays), RangeError guards (5-set standard ctx, melded
+  pairs-form ctx). 330 tests green, check clean.
+
 ## Remaining
 
-- Step 2: the 12 set-structure predicates (pinfu, iipeikou, ryanpeikou,
-  sanshoku×2, ittsuu, chanta, junchan, toitoi, sanankou, sankantsu, shousangen)
-  + their CASES rows.
-- Step 3: tighten CASES to the total Record, interaction + contract tests.
 - Step 4: review.md.
 
 ## Deviations from plan

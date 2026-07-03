@@ -8,6 +8,7 @@
 
 import { describe, expect, it } from 'vitest'
 import {
+  STANDARD_YAKU_NAMES,
   TILE_KINDS,
   decomposeAgari,
   kindIndexOf,
@@ -116,9 +117,10 @@ function ctxOf(spec: string, overrides: CtxOverrides = {}): WinContext {
 }
 
 // ---------------------------------------------------------------------------
-// The per-yaku table. Each entry: one positive and one NEAR-MISS negative, with
-// the rule-derivation in a comment. Typed over the names present so far; the
-// final step tightens the type to the total Record over YakuName.
+// The per-yaku table — TOTAL over YakuName by its type, so the compiler enforces
+// the AC's "every catalog yaku has at least one positive and one negative case".
+// Each entry: one positive and one NEAR-MISS negative, with the rule-derivation
+// in a comment.
 // ---------------------------------------------------------------------------
 
 interface YakuCase {
@@ -126,7 +128,7 @@ interface YakuCase {
   negative: WinContext
 }
 
-const CASES: Partial<Record<YakuName, YakuCase>> = {
+const CASES: Record<YakuName, YakuCase> = {
   // Self-draw on a closed hand; the negative opens the SAME shape with a chi.
   'menzen-tsumo': {
     positive: ctxOf('123m456m789m234p55s', { source: 'wall' }),
@@ -274,12 +276,19 @@ const CASES: Partial<Record<YakuName, YakuCase>> = {
 }
 
 describe('standardYakuOf per-yaku cases', () => {
-  for (const [name, cases] of Object.entries(CASES) as [YakuName, YakuCase][]) {
+  it('the case table covers the catalog exactly', () => {
+    expect(Object.keys(CASES).sort()).toEqual([...STANDARD_YAKU_NAMES].sort())
+    expect(STANDARD_YAKU_NAMES).toHaveLength(27)
+    expect(new Set(STANDARD_YAKU_NAMES).size).toBe(27)
+    expect(Object.isFrozen(STANDARD_YAKU_NAMES)).toBe(true)
+  })
+
+  for (const name of STANDARD_YAKU_NAMES) {
     it(`${name}: positive fixture fires`, () => {
-      expect(standardYakuOf(cases.positive)).toContain(name)
+      expect(standardYakuOf(CASES[name].positive)).toContain(name)
     })
     it(`${name}: near-miss negative stays silent`, () => {
-      expect(standardYakuOf(cases.negative)).not.toContain(name)
+      expect(standardYakuOf(CASES[name].negative)).not.toContain(name)
     })
   }
 })
@@ -301,5 +310,150 @@ describe('standardYakuOf meld builders sanity', () => {
   it('an ankan keeps the hand closed for menzen-tsumo', () => {
     const ctx = ctxOf('234m567p678s55z', { melds: [ankan('3s')], source: 'wall' })
     expect(standardYakuOf(ctx)).toContain('menzen-tsumo')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Interactions: the conventions design D5 encodes as predicate structure —
+// disjoint families, favorable attributions, double-fires — each pinned by a
+// directed test.
+// ---------------------------------------------------------------------------
+
+describe('standardYakuOf interactions', () => {
+  it('ryanpeikou supersedes iipeikou — never both', () => {
+    const names = standardYakuOf(
+      ctxOf('223344m556677p88s', { pick: (d) => d.form === 'standard' }),
+    )
+    expect(names).toContain('ryanpeikou')
+    expect(names).not.toContain('iipeikou')
+  })
+
+  it('the chanta family is pairwise exclusive on its boundary hands', () => {
+    // Junchan shape: terminals in every set, no honors → junchan only.
+    const junchanNames = standardYakuOf(ctxOf('123m789m123p999s99p'))
+    expect(junchanNames).toContain('junchan')
+    expect(junchanNames).not.toContain('chanta')
+    expect(junchanNames).not.toContain('honroutou')
+    // Chanta shape: honors present, runs present → chanta only.
+    const chantaNames = standardYakuOf(ctxOf('123m789m789p111z22z'))
+    expect(chantaNames).toContain('chanta')
+    expect(chantaNames).not.toContain('junchan')
+    expect(chantaNames).not.toContain('honroutou')
+    // Honroutou shape: terminals/honors only, no runs → honroutou (and toitoi
+    // co-fires — a different family, stacking is legal).
+    const honroutouNames = standardYakuOf(ctxOf('111m999m111p11s', { melds: [pon('9p')] }))
+    expect(honroutouNames).toContain('honroutou')
+    expect(honroutouNames).toContain('toitoi')
+    expect(honroutouNames).not.toContain('chanta')
+    expect(honroutouNames).not.toContain('junchan')
+  })
+
+  it('honroutou also fires over the chiitoitsu form', () => {
+    const names = standardYakuOf(ctxOf('1199m1199p1122z99s'))
+    expect(names).toContain('honroutou')
+    expect(names).toContain('chiitoitsu')
+  })
+
+  it('a dealer East triplet in an East round fires BOTH wind yakuhai', () => {
+    const names = standardYakuOf(
+      ctxOf('234m567p678s22s111z', { seatWind: '1z', roundWind: '1z' }),
+    )
+    expect(names).toContain('yakuhai-seat-wind')
+    expect(names).toContain('yakuhai-round-wind')
+  })
+
+  it('pinfu accepts only the two-sided wait', () => {
+    // 123m 789m 456p 567s + 22p: won on 3m = 12m penchan; on 7m = 89m penchan;
+    // on 2p = tanki; on 4p = 56p... no — 456p won on 4p is the LOW end, wait
+    // was 56p, two-sided (3p/6p): ryanmen. Derivations per completesRyanmen.
+    const spec = '123m789m456p22p567s'
+    expect(standardYakuOf(ctxOf(spec, { winningKind: '3m' }))).not.toContain('pinfu')
+    expect(standardYakuOf(ctxOf(spec, { winningKind: '7m' }))).not.toContain('pinfu')
+    expect(standardYakuOf(ctxOf(spec, { winningKind: '2p' }))).not.toContain('pinfu')
+    expect(standardYakuOf(ctxOf(spec, { winningKind: '4p' }))).toContain('pinfu')
+    // 789s won on 9s: wait was 78s, two-sided (6s/9s) — the high-end ryanmen.
+    expect(
+      standardYakuOf(ctxOf('234m567m345p88p789s', { winningKind: '9s' })),
+    ).toContain('pinfu')
+  })
+
+  it('an otakaze wind pair does not break pinfu; a seat-wind pair does', () => {
+    // Pair 2z with East seat and round: not yakuhai, pinfu stands.
+    const ctx = ctxOf('123m456m789m22z567s', {
+      winningKind: '1m',
+      seatWind: '1z',
+      roundWind: '1z',
+    })
+    expect(standardYakuOf(ctx)).toContain('pinfu')
+    // The same hand seen by the South seat (2z pair IS its wind): no pinfu.
+    expect(standardYakuOf({ ...ctx, seatWind: '2z' })).not.toContain('pinfu')
+  })
+
+  it('a run absorbs the ron tile and preserves sanankou', () => {
+    // 222m 88m 333p 345s 444s, ron 4s: the 345s run can take the winning tile,
+    // so all three triplets stay concealed (the favorable attribution).
+    const ctx = ctxOf('222m88m333p345s444s', { source: 'discard', winningKind: '4s' })
+    expect(standardYakuOf(ctx)).toContain('sanankou')
+  })
+
+  it('a rinshan win as the wall empties is rinshan, never haitei', () => {
+    const names = standardYakuOf(
+      ctxOf('234m345m456p567s88s', { source: 'rinshan', lastTile: true }),
+    )
+    expect(names).toContain('rinshan')
+    expect(names).not.toContain('haitei')
+  })
+
+  it('a yakuless open completion returns [] exactly', () => {
+    // Chi 1m2m3m + 345s among runs of three suits, terminal 9s, junk pair:
+    // no flush, no tanyao, no honor, no circumstance — nothing fires.
+    const ctx = ctxOf('456p789s345s99p', { melds: [chi('1m')], source: 'discard' })
+    expect(standardYakuOf(ctx)).toEqual([])
+  })
+
+  it('a kokushi decomposition answers [] — the yakuman is -04 business', () => {
+    const ctx = ctxOf('19m19p19s11234567z')
+    expect(ctx.decomposition.form).toBe('kokushi')
+    expect(standardYakuOf(ctx)).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Contract: result order, purity, guards.
+// ---------------------------------------------------------------------------
+
+describe('standardYakuOf contract', () => {
+  it('returns names in catalog order — the full list of a multi-yaku hand', () => {
+    // 123m 123m 456m 789m + 11m, self-drawn on 1m: closed tsumo; all runs with
+    // a non-yakuhai pair won on the 23m ryanmen (pinfu); duplicated 123m
+    // (iipeikou); 123-456-789m (ittsuu); one suit, no honors (chinitsu).
+    const ctx = ctxOf('123m123m456m789m11m', { winningKind: '1m', source: 'wall' })
+    expect(standardYakuOf(ctx)).toEqual([
+      'menzen-tsumo',
+      'pinfu',
+      'iipeikou',
+      'ittsuu',
+      'chinitsu',
+    ])
+  })
+
+  it('is a pure read: inputs unmutated, repeat calls identical', () => {
+    const ctx = ctxOf('222m567m333p444s88s', { melds: [], source: 'discard', winningKind: '4s' })
+    const snapshot = JSON.stringify(ctx)
+    const first = standardYakuOf(ctx)
+    const second = standardYakuOf(ctx)
+    expect(JSON.stringify(ctx)).toBe(snapshot)
+    expect(second).toEqual(first)
+    expect(second).not.toBe(first)
+  })
+
+  it('throws on a standard context whose sets and melds do not total four', () => {
+    const good = ctxOf('123m456m789m234p55s')
+    expect(() => standardYakuOf({ ...good, melds: [pon('5z')] })).toThrow(RangeError)
+  })
+
+  it('throws on a pairs-form context carrying a meld', () => {
+    const good = ctxOf('1122m3344p5566s77z')
+    expect(() => standardYakuOf({ ...good, melds: [pon('5z')] })).toThrow(RangeError)
   })
 })
