@@ -746,6 +746,119 @@ describe('riichi declaration folds', () => {
   })
 })
 
+describe('furiten tracking (T-009-01-03)', () => {
+  // Mined fixture: seed 3951 is legal.win.test.ts's own RON_SEED (seat 3 dealt
+  // tenpai, pinfu waits 1s/4s/7s — the "a claimless ron window" anchor). Turn 0:
+  // seat 0 tsumogiris live[0] = 72 (1s), completing seat 3's hand with a
+  // yaku-bearing wait (pinfu) — the ronWindowPrefix anchor's own offer. Continuing
+  // in tsumogiri (no ron taken) past seat 1's next draw closes that window
+  // unronned: seat 3 is not the discarder and not the very next actor, so the
+  // seal is non-vacuous (persists across seat 2's turn) until seat 3's own next
+  // draw, turn index 3. Scanned offline against the real fold; never regenerate.
+  const TEMP_SEED = 3951
+
+  it('a passed win from another seat seals tempFuriten, non-vacuously, until the seat’s own next draw', () => {
+    const beforePass = foldRecord(tsumogiriRecord(TEMP_SEED, 1))
+    expect(beforePass.claimable).toEqual({ seat: 0, tile: 72 })
+    expect(beforePass.tempFuriten).toEqual([false, false, false, false])
+
+    // Turn 1 (seat 1's draw+discard): the window closes, seat 3 never ronned.
+    const justSealed = foldRecord(tsumogiriRecord(TEMP_SEED, 2))
+    expect(justSealed.tempFuriten).toEqual([false, false, false, true])
+    expect(justSealed.riichiFuriten).toEqual([false, false, false, false]) // never riichi'd
+
+    // Turn 2 (seat 2's draw+discard): unrelated to seat 3 — the seal persists.
+    const stillSealed = foldRecord(tsumogiriRecord(TEMP_SEED, 3))
+    expect(stillSealed.tempFuriten).toEqual([false, false, false, true])
+
+    // Turn 3 (seat 3's OWN draw): its next draw — the seal clears.
+    const unsealed = foldRecord(tsumogiriRecord(TEMP_SEED, 4))
+    expect(unsealed.tempFuriten).toEqual([false, false, false, false])
+  })
+
+  it('re-folding the same record twice reproduces identical furiten facts (determinism)', () => {
+    const record = tsumogiriRecord(TEMP_SEED, 2)
+    const first = foldRecord(record)
+    const second = foldRecord(record)
+    expect(second.tempFuriten).toEqual(first.tempFuriten)
+    expect(second.riichiFuriten).toEqual(first.riichiFuriten)
+    expect(first.tempFuriten).toEqual([false, false, false, true]) // sanity: non-vacuous
+  })
+
+  it('the vacuous case: a pass by the IMMEDIATE next actor seals and unseals within the same draw, never observably furiten', () => {
+    // Seed 4851 (legal.win.test.ts's COEXIST_SEED): seat 0 tsumogiris live[4] = 87
+    // (4s) at turn 4, completing seat 1's hand (pinfu/tanyao/sanshoku — the
+    // "coexistence window" anchor). Seat 1 is the very next actor in rotation, so
+    // the same 'draw' action that closes the window (sealPassedWins) is also
+    // seat 1's own next draw (clearTempFuriten) — both fire inside one fold step,
+    // and no external caller ever observes an intermediate sealed state. This is
+    // sealPassedWins' deliberate placement at window-CLOSE, not discard time (see
+    // record.ts's own comment on the function): sealing at discard time would
+    // have gated the very ron seat 1 had not yet been offered a chance to take.
+    const COEXIST_SEED = 4851
+    for (const turns of [5, 6, 7, 8]) {
+      const state = foldRecord(tsumogiriRecord(COEXIST_SEED, turns))
+      expect(state.tempFuriten).toEqual([false, false, false, false])
+    }
+  })
+
+  // Mined fixture: seed 100 is the 'riichi declaration folds' block's own
+  // RIICHI_SEED — seat 0 declares riichi on its very first draw, tile 55.
+  // Continuing in tsumogiri thereafter (post-riichi turn j rotates seat
+  // (1+j)%4, consuming live[1+j] — live[0] was already the riichi's own draw),
+  // seat 0's post-riichi 13-tile hand never changes shape (forced tsumogiri),
+  // so its wait is fixed for the rest of the hand. Post-riichi turn j=13 (seat
+  // 2, consuming live[14])'s DRAW closes the window opened by turn j=12 (seat
+  // 1)'s discard, unronned: seat 2 is seat 0's opposite, not the immediate next
+  // actor, so sealing is non-vacuous. Seat 0's own next turn is j=15. Scanned
+  // offline against the real fold; never regenerate.
+  const RIICHI_FURITEN_SEED = 100
+
+  /** `count` complete post-riichi tsumogiri turns, rotating from seat 1, consuming live[1..]. */
+  function postRiichiTurns(live: readonly TileId[], count: number): HandAction[] {
+    const actions: HandAction[] = []
+    for (let j = 0; j < count; j++) {
+      const seat = ((1 + j) % SEAT_COUNT) as Seat
+      actions.push({ type: 'draw', seat }, { type: 'discard', seat, tile: live[1 + j] })
+    }
+    return actions
+  }
+
+  it('a passed win while in riichi seals riichiFuriten permanently — it survives the locked seat’s own next draw', () => {
+    const live = dealtLive(RIICHI_FURITEN_SEED)
+    const riichiActions: HandAction[] = [
+      { type: 'draw', seat: 0 },
+      { type: 'riichi', seat: 0, tile: 55 },
+    ]
+
+    // Right before turn j=13 (seat 2)'s draw: 13 complete turns (j=0..12) folded.
+    const beforeSeal = foldRecord({
+      seed: RIICHI_FURITEN_SEED,
+      actions: [...riichiActions, ...postRiichiTurns(live, 13)],
+    })
+    expect(beforeSeal.riichiFuriten).toEqual([false, false, false, false])
+
+    // Turn j=13 (seat 2)'s draw closes the window opened by turn j=12 (seat 1)'s
+    // discard, unronned — seat 0 is locked, so both furiten kinds seal.
+    const justSealed = foldRecord({
+      seed: RIICHI_FURITEN_SEED,
+      actions: [...riichiActions, ...postRiichiTurns(live, 13), { type: 'draw', seat: 2 }],
+    })
+    expect(justSealed.riichiFuriten).toEqual([true, false, false, false])
+    expect(justSealed.tempFuriten).toEqual([true, false, false, false])
+
+    // Seat 0's own next turn (j=15) draws — its forced-tsumogiri turn clears
+    // tempFuriten...
+    const afterOwnDraw = foldRecord({
+      seed: RIICHI_FURITEN_SEED,
+      actions: [...riichiActions, ...postRiichiTurns(live, 16)],
+    })
+    expect(afterOwnDraw.tempFuriten).toEqual([false, false, false, false])
+    // ...but riichiFuriten stays sealed for the rest of the hand — never clears.
+    expect(afterOwnDraw.riichiFuriten).toEqual([true, false, false, false])
+  })
+})
+
 // ————————————————————————————————————————————————————————————————————————————
 // T-009-01-02: the riichi yaku family's fold-time tracking (doubleRiichi/
 // ippatsu) and ura-dora capture. Every fixture below is a real mined seed,
