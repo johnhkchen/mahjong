@@ -340,4 +340,62 @@
     letter-spacing: 0.08em;
     text-transform: uppercase;
   }
+
+  /* Motion: claims and hand-ends arrive, they don't pop. Every keyframe below is
+     from-only — the implicit `to` is the element's own settled style above, so the
+     end states live in exactly one place and, under reduced motion, this whole
+     block simply never applies: elements appear directly in those end states.
+     Durations sit inside one BOT_DELAY_MS pacing tick, so the next forced action
+     never lands mid-reveal. */
+  @media (prefers-reduced-motion: no-preference) {
+    /* A meld li mounts exactly when the fold first contains the meld — the
+       unkeyed each appends new melds and updates existing lis in place, which
+       is what keeps a second claim from replaying the first meld's settle. */
+    .meld {
+      animation: meld-settle 200ms ease-out;
+    }
+    @keyframes meld-settle {
+      from {
+        opacity: 0;
+        transform: scale(0.85);
+      }
+    }
+
+    /* The claimed tile turns sideways into the parlor mark. */
+    .claimed-tile {
+      animation: claim-turn 200ms ease-out;
+    }
+    @keyframes claim-turn {
+      from {
+        transform: rotate(0deg);
+      }
+    }
+
+    /* The pond tile is visibly taken, not blinked dim: the claimed branch swap
+       recreates the li, which is what fires this — a class toggle on a kept li
+       would not restart it. */
+    .pond .claimed {
+      animation: claim-taken 200ms ease-out;
+    }
+    @keyframes claim-taken {
+      from {
+        opacity: 1;
+        transform: rotate(0deg);
+      }
+    }
+
+    /* Hand-end reveal: the ryuukyoku line (a direct child of .center — the win
+       sentence's own .ended sits inside .win-summary and must not double-run)
+       and the win summary rise quietly into place. */
+    .center > .ended,
+    .win-summary {
+      animation: reveal-rise 220ms ease-out;
+    }
+    @keyframes reveal-rise {
+      from {
+        opacity: 0;
+        transform: translateY(0.35rem);
+      }
+    }
+  }
 </style>
