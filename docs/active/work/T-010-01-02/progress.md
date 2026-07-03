@@ -57,3 +57,32 @@ diffed by eye); clicking it relabels every wind name live (`East/South/West/Nort
 exactly the `mahjong-terminology` localStorage key; a real page reload (not just a module reset)
 still shows `zh-hant`; a second click reverts everything; zero console warnings/errors captured
 during the whole run. Screenshots and the driver script were scratch artifacts, not committed.
+
+## Step 3 — `app.terminology.svelte.test.ts`
+
+Done, with two deviations found while writing it (both fixed before commit):
+
+1. **Wind-text assertions needed a precise per-seat helper, not a whole-`.table` scan.** The
+   SEED=1 dealt hand happens to include an actual South-wind honor tile (2z), which
+   `Tile.svelte` renders as the glyph "南" — the exact same string as the *seat label* under
+   `zh-hant`. A naive `target.querySelector('.table').textContent.includes('南')` check was
+   fooled by the tile face, not the seat label (T-010-01-01 review.md already flagged this
+   glyph/label distinction; this ticket's tests are the first to actually trip on it). Fixed
+   with `seatWindText()`, reading exactly `.seat.{area}`'s first child text node — the wind
+   label is always `{seat.wind}`'s own text node, before the pond/hand/melds elements.
+2. **`vi.resetModules()` + a dynamic `import('./App.svelte')` alone threw `effect_orphan`.**
+   Re-importing only `App.svelte` after `resetModules()` pulls in a SECOND, separate 'svelte'
+   runtime instance (transitively), while the test file's top-level `mount`/`flushSync` are
+   still bound to the FIRST instance — mounting a fresh-module component with the old runtime's
+   `mount()` pairs two different Svelte instances and Svelte's own effect tracking rejects it.
+   Fixed by also dynamically re-importing `'svelte'` itself alongside `App.svelte` in the same
+   post-reset batch (`mountFreshApp()` helper), so every piece of a "simulated reload" comes from
+   one consistent module graph.
+3. Also caught before running anything: the original `afterEach` cleared `localStorage` BEFORE
+   calling `setTerminology('romaji')` — but `setTerminology()` itself always writes the storage
+   key, so the reset call immediately re-wrote `'romaji'` back in, and the very next test's
+   "starts with no stored key" assumption failed. Reordered: reset the in-memory terminology
+   first, clear storage after.
+
+All 8 tests pass; full suite re-run (911/911, twice) to confirm no cross-file leakage from this
+new file's `setTerminology`/`vi.resetModules()` usage — none found. `just check` clean.
