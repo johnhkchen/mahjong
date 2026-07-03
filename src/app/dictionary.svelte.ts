@@ -81,7 +81,9 @@ export function setTerminology(next: Terminology): void {
 const SEAT_TERMS: readonly TermKey[] = ['east', 'south', 'west', 'north']
 
 /** The wind term for engine Seat index (0=E, 1=S, 2=W, 3=N) — shared by Table.svelte and
- *  HandEnd.svelte in place of each holding its own local wind-name array. */
-export function windTerm(seat: 0 | 1 | 2 | 3): string {
+ *  HandEnd.svelte in place of each holding its own local wind-name array. Takes `number`
+ *  rather than core's narrower `Seat` type: `#each` block indices in the callers' templates
+ *  are plain `number`, and every caller only ever passes a real 0-3 seat index. */
+export function windTerm(seat: number): string {
   return term(SEAT_TERMS[seat])
 }

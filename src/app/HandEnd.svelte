@@ -1,5 +1,6 @@
 <script lang="ts">
   import { scoreBreakdownOf, type TableState } from '../core'
+  import { term, windTerm } from './dictionary.svelte'
   import Tile from './Tile.svelte'
 
   // The hand-end report: stateless and presentational, like every other component
@@ -28,26 +29,21 @@
 
   const breakdown = $derived(table.phase === 'playing' ? null : scoreBreakdownOf(table))
   const displayScores = $derived(scores ?? breakdown?.scores)
-
-  // Wind names by engine Seat index — Table.svelte's own SEATS list, duplicated
-  // locally (a .svelte file exports no values another component can import; the
-  // windKindOf-across-three-core-files precedent applies here too).
-  const WIND = ['East', 'South', 'West', 'North'] as const
 </script>
 
 {#if breakdown !== null}
   <div class="hand-end" role="status">
     {#if breakdown.kind === 'ryuukyoku'}
-      <p class="ended">ryuukyoku — exhaustive draw</p>
+      <p class="ended">{term('ryuukyoku')} — exhaustive draw</p>
       <ul class="tenpai" aria-label="tenpai">
         {#each breakdown.tenpai as isTenpai, seat (seat)}
-          <li>{WIND[seat]}: {isTenpai ? 'tenpai' : 'noten'}</li>
+          <li>{windTerm(seat)}: {isTenpai ? term('tenpai') : term('noten')}</li>
         {/each}
       </ul>
     {:else}
       <p class="ended">
-        {WIND[breakdown.winner]}{breakdown.winner === 0 ? ' (you)' : ''} wins by
-        {breakdown.by}{breakdown.by === 'ron' ? ` from ${WIND[breakdown.from ?? 0]}` : ''}
+        {windTerm(breakdown.winner)}{breakdown.winner === 0 ? ' (you)' : ''} wins by
+        {breakdown.by === 'ron' ? term('ron') : term('tsumo')}{breakdown.by === 'ron' ? ` from ${windTerm(breakdown.from ?? 0)}` : ''}
       </p>
       <span class="winning-tile" aria-label="winning tile">
         <Tile id={table.win!.tile} />
@@ -58,23 +54,23 @@
         {/each}
       </ul>
       {#if breakdown.doraHan > 0}
-        <p class="dora" aria-label="dora">dora {breakdown.doraHan}</p>
+        <p class="dora" aria-label="dora">{term('dora')} {breakdown.doraHan}</p>
       {/if}
       <p class="points" aria-label="points line">
         {#if breakdown.limitName !== null}
           {breakdown.limitName} {breakdown.points}
         {:else}
-          {breakdown.fu}fu {breakdown.han}han {breakdown.points}
+          {breakdown.fu}{term('fu')} {breakdown.han}{term('han')} {breakdown.points}
         {/if}
       </p>
     {/if}
     <ul class="scores" aria-label="scores">
       {#each displayScores ?? [] as score, seat (seat)}
-        <li>{WIND[seat]}: {score}</li>
+        <li>{windTerm(seat)}: {score}</li>
       {/each}
     </ul>
     {#if onnext}
-      <button type="button" class="next-hand" onclick={onnext}>next hand</button>
+      <button type="button" class="next-hand" onclick={onnext}>{term('nextHand')}</button>
     {/if}
   </div>
 {/if}
