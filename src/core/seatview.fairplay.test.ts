@@ -406,3 +406,40 @@ describe('the surgery is a valid sibling constructor', () => {
     }
   })
 })
+
+describe('hidden-permutation equivalence (the AC property)', () => {
+  it('states differing only in hidden tiles project to deep-equal SeatViews (fc breadth)', () => {
+    fc.assert(
+      fc.property(
+        seedArb,
+        turnsArb,
+        fc.boolean(),
+        seatArb,
+        permSeedArb,
+        (seed, turns, dangle, seat, permSeed) => {
+          const state = foldedState(seed, turns, dangle)
+          const view = seatView(state, seat)
+          expect(seatView(rotatedSibling(state, seat), seat)).toEqual(view)
+          expect(seatView(shuffledSibling(state, seat, permSeed), seat)).toEqual(view)
+        },
+      ),
+    )
+  })
+
+  it('holds at every prefix of every corpus game, for every seat — melds, kans, kan-dora, agari', () => {
+    for (const record of corpus) {
+      for (let length = 0; length <= record.actions.length; length++) {
+        const state = foldPrefix(record, length)
+        for (let seat = 0; seat < SEAT_COUNT; seat++) {
+          const view = seatView(state, seat as Seat)
+          expect(seatView(rotatedSibling(state, seat as Seat), seat as Seat)).toEqual(view)
+          for (const permSeed of CORPUS_PERM_SEEDS) {
+            expect(seatView(shuffledSibling(state, seat as Seat, permSeed), seat as Seat)).toEqual(
+              view,
+            )
+          }
+        }
+      }
+    }
+  })
+})
