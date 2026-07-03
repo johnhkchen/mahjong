@@ -142,14 +142,21 @@ describe('the mixed claim-window race (seed 344)', () => {
     expect(secondCalls).toHaveLength(1)
     expect(secondCalls[0]!.getAttribute('aria-label')).toBe('chi 2s with 3s 4s')
 
-    // DEFECT: the two prompts are structurally identical — same aria-label, same
-    // element/class shape, no fresh-prompt beat between them — exactly the
-    // "appeared twice" reading from the report, even though this is a genuinely
-    // NEW window on a different discard. (The E-011 fix adds the distinguishing
-    // beat; when it lands this equality is the assertion to flip.)
+    // FIXED (T-011-02-02): the shared aria-label SHAPE and className are expected
+    // chrome for two same-call-type windows, not a defect — what actually matters
+    // is that the second prompt is a genuinely fresh mount, never the first prompt
+    // patched in place. App.svelte keys the console's ClaimPrompt on the window's
+    // own claimable seat+tile, so a new window always tears down the old DOM and
+    // mounts a new one — which is what lets the CSS entry beat (ClaimPrompt.svelte,
+    // @starting-style, 200ms, prefers-reduced-motion-gated) restart on every
+    // window. `isConnected` is the fact a same-node patch cannot produce: a patch
+    // leaves the original node attached with updated attributes; a remount detaches
+    // it before the new node exists.
     expect(secondPromptNode.getAttribute('aria-label')).toBe(
       firstPromptNode.getAttribute('aria-label'),
     )
     expect(secondPromptNode.className).toBe(firstPromptNode.className)
+    expect(secondPromptNode).not.toBe(firstPromptNode)
+    expect(firstPromptNode.isConnected).toBe(false)
   }, 20_000)
 })

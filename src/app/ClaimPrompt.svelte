@@ -157,4 +157,26 @@
     letter-spacing: 0.06em;
     text-transform: uppercase;
   }
+
+  /* Motion: a fresh window enters with a visible beat, never a silent patch.
+     App.svelte keys this component on the window's own claimable seat+tile
+     (T-011-02-02), so a new window always mounts a brand-new `.prompt` — this
+     transition fires every time by construction, the same "recreation is what
+     restarts it" relationship Table.svelte's own motion comments describe.
+     Insertion transition via @starting-style (client-only, so SSR output is
+     untouched), matching Table.svelte's `.pond li`/`.drawn` shape rather than
+     Svelte's `transition:` directive — this codebase's own E-007 convention.
+     200ms sits inside App.svelte's 250ms BOT_DELAY_MS tick, so the beat settles
+     before the next forced action could land. */
+  @media (prefers-reduced-motion: no-preference) {
+    .prompt {
+      transition:
+        opacity 200ms ease-out,
+        transform 200ms ease-out;
+      @starting-style {
+        opacity: 0;
+        transform: translateY(0.3rem);
+      }
+    }
+  }
 </style>

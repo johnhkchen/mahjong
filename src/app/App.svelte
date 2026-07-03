@@ -70,6 +70,16 @@
   // button simply joins the live tap surface.
   const prompt = $derived(promptChoices(offered, PLAYER))
   const win = $derived(winChoice(offered, PLAYER))
+  // A window's own identity (T-011-02-02): the claimable discard's seat+tile, the
+  // same vocabulary record.ts's `claimable` field already uses. A string (not the
+  // claimable object itself) so the identity is legible at the call site and stays
+  // value-stable across incidental re-folds that don't touch claimable (e.g. a
+  // furiten seal flipping elsewhere never remounts the prompt). The tsumo point
+  // has no claimable discard; it falls back to a stable literal since it ends the
+  // hand and never needs to distinguish itself from a reopened window.
+  const promptKey = $derived(
+    table.claimable !== null ? `${table.claimable.seat}:${table.claimable.tile}` : 'no-window',
+  )
   // Houtei-only presentation state: declining a houtei ron has no action to append
   // (the hand is already provisionally ended), so the pass tap just lowers the
   // prompt. Never authoritative, never reset — a single hand ends there either way.
@@ -220,15 +230,20 @@
        stays the owner's fact — the {#if} merely lives inside the slot now. -->
   <div class="console">
     {#if (prompt.length > 0 || win !== null) && !dismissed}
-      <ClaimPrompt
-        claimed={table.claimable?.tile ?? null}
-        choices={prompt}
-        {win}
-        canPass={win?.type !== 'tsumo'}
-        onclaim={claim}
-        onpass={pass}
-        onwin={takeWin}
-      />
+      <!-- Keyed on the window's own identity (claimable seat+tile) so a new window
+           always remounts — never patches the prior prompt's DOM in place — which is
+           what lets the entry beat (ClaimPrompt.svelte) restart on every window. -->
+      {#key promptKey}
+        <ClaimPrompt
+          claimed={table.claimable?.tile ?? null}
+          choices={prompt}
+          {win}
+          canPass={win?.type !== 'tsumo'}
+          onclaim={claim}
+          onpass={pass}
+          onwin={takeWin}
+        />
+      {/key}
     {:else if riichi !== null}
       <RiichiPrompt tile={riichi.tile} ondeclare={declareRiichi} ondecline={declineRiichi} />
     {:else if hint !== null}
