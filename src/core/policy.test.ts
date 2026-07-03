@@ -328,6 +328,37 @@ describe('purity and determinism', () => {
     )
     expect(cloned).toEqual(chosen)
   })
+
+  it('returns the identical riichi element on repeated calls and never mutates its inputs', () => {
+    const take = tileSource()
+    const hand = take('123m456p789s1122z')
+    const drawn = take('5z')[0]
+    const view = viewOf({ hand, drawn })
+    const offered = [...discardsOf(view), { type: 'riichi', seat: view.seat, tile: drawn } as HandAction]
+    const viewSnapshot = JSON.stringify(view)
+    const offeredSnapshot = JSON.stringify(offered)
+    const first = discardPolicy(view, offered)
+    const second = discardPolicy(view, offered)
+    expect(first.type).toBe('riichi')
+    expect(second).toBe(first)
+    expect(offered).toContain(first)
+    expect(JSON.stringify(view)).toBe(viewSnapshot)
+    expect(JSON.stringify(offered)).toBe(offeredSnapshot)
+  })
+
+  it('returns a structurally equal riichi action from structurally equal inputs', () => {
+    const take = tileSource()
+    const hand = take('123m456p789s1122z')
+    const drawn = take('5z')[0]
+    const view = viewOf({ hand, drawn })
+    const offered = [...discardsOf(view), { type: 'riichi', seat: view.seat, tile: drawn } as HandAction]
+    const chosen = discardPolicy(view, offered)
+    const cloned = discardPolicy(
+      structuredClone(view) as SeatView,
+      offered.map((a) => ({ ...a }) as HandAction),
+    )
+    expect(cloned).toEqual(chosen)
+  })
 })
 
 // ---------------------------------------------------------------------------------
