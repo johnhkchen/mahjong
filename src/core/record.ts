@@ -845,7 +845,6 @@ function sealPassedWins(state: TableState, discarder: Seat, tile: TileId): void 
   let riichi: [boolean, boolean, boolean, boolean] | null = null
   for (let k = 1; k < SEAT_COUNT; k++) {
     const seat = ((discarder + k) % SEAT_COUNT) as Seat
-    console.error('DEBUG sealPassedWins', { discarder, tile, seat, completes: completesWithYaku(state, seat, tile) })
     if (!completesWithYaku(state, seat, tile)) continue
     temp ??= [...state.tempFuriten] as [boolean, boolean, boolean, boolean]
     temp[seat] = true

@@ -30,7 +30,7 @@ import { RIICHI_STICK, type HandAction, type Meld, type TableState } from './rec
 import { isAgari } from './agari'
 import { waits } from './waits'
 import { yakuOf, type WinYakuName } from './yakuman'
-import type { WindKind } from './yaku'
+import type { RiichiStatus, WindKind } from './yaku'
 import { shanten } from './shanten'
 
 /** The held copies of one kind, in hand order — the canonical `uses` source. */
@@ -74,6 +74,16 @@ function windKindOf(seat: Seat): WindKind {
 }
 
 /**
+ * `seat`'s riichi status right now, from TableState.riichi/doubleRiichi
+ * (T-009-01-02) — record.ts's own riichiStatusOf, restated here per this
+ * module's own header ("nothing here imports record.ts guard logic").
+ */
+function riichiStatusOf(state: TableState, seat: Seat): RiichiStatus {
+  if (!state.riichi[seat]) return 'none'
+  return state.doubleRiichi[seat] ? 'double' : 'riichi'
+}
+
+/**
  * The yaku a completed win would carry — the single Win-assembly point, so the
  * tsumo, window-ron, and houtei-ron gates cannot drift from each other or from the
  * shape applyWinTail folds. Callers guarantee completion (isAgari probed first), so
@@ -94,10 +104,8 @@ function winYaku(
     lastTile: state.live.length === 0,
     seatWind: windKindOf(seat),
     roundWind: ROUND_WIND,
-    // T-009-01-02: inert placeholder — commit 3 replaces with TableState.riichi/
-    // doubleRiichi/ippatsu-derived values for `seat`.
-    riichi: 'none',
-    ippatsu: false,
+    riichi: riichiStatusOf(state, seat),
+    ippatsu: state.ippatsu[seat],
   })
 }
 

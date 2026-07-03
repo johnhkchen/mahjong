@@ -414,3 +414,29 @@ describe('the two-sided win partition', () => {
     }
   })
 })
+
+// ---------------------------------------------------------------------------
+// T-009-01-02: winYaku now threads TableState.riichi/doubleRiichi/ippatsu —
+// confirm the offer/fold agreement still holds at a real riichi win anchor
+// (record.test.ts's mined double-riichi + ippatsu ron fixture), not just that
+// the file compiles against the widened Win/WinContext shape.
+// ---------------------------------------------------------------------------
+
+describe('a riichi win offer agrees with the fold (T-009-01-02)', () => {
+  it('the double-riichi/ippatsu ron at seed 100 is offered before it folds', () => {
+    const prefix: readonly HandAction[] = [
+      { type: 'draw', seat: 0 }, { type: 'riichi', seat: 0, tile: 55 },
+      { type: 'draw', seat: 1 }, { type: 'discard', seat: 1, tile: 53 },
+      { type: 'draw', seat: 2 },
+    ]
+    const withDiscard = [...prefix, { type: 'discard', seat: 2, tile: 127 } as HandAction]
+    const state = foldRecord({ seed: 100, actions: withDiscard })
+    const offered = legalActions(state)
+    expect(offered).toContainEqual({ type: 'ron', seat: 0, tile: 127 })
+    const folded = foldRecord({ seed: 100, actions: [...withDiscard, { type: 'ron', seat: 0, tile: 127 }] })
+    expect(folded.win).toEqual({
+      by: 'ron', winner: 0, from: 2, tile: 127,
+      yaku: ['double-riichi', 'ippatsu', 'chiitoitsu'],
+    })
+  })
+})
