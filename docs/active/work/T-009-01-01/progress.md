@@ -12,7 +12,10 @@ Tracking plan.md's 8 steps. Updated as each completes.
   `legal.win.test.ts`/`drive.test.ts` offered-index assertions — riichi offers shift
   every index after them, an explicitly documented, expected consequence (legal.ts's
   own doc-comment), not a regression. See progress notes below.
-- [ ] Step 5 — settlement.ts: riichi-stick deltas + pot payout
+- [x] Step 5 — settlement.ts: riichi-stick deltas + pot payout. This commit also
+  necessarily finalizes an unrelated in-flight thread's T-008-03-01 work
+  (`ScoreBreakdown`/`scoreBreakdownOf`, already fully implemented, tested, and
+  passing, just uncommitted) — see progress notes below for why.
 - [ ] Step 6 — game.ts: thread scoresIn/potIn/pot
 - [ ] Step 7 — seatview.ts: expose riichi/pot
 - [ ] Step 8 — full-suite confirmation pass
@@ -44,3 +47,20 @@ Tracking plan.md's 8 steps. Updated as each completes.
     hand shape happen to qualify on EVERY one of the 14 discard candidates,
     pushing tsumo's index from 14/11 to 28/22. Re-verified against `legalActions`
     directly, not hand-derived; updated in place with the new indices documented.
+- **Step 5**: `settlement.ts`/`settlement.test.ts` already carried a substantial
+  uncommitted diff from a different, still-in-progress thread (T-008-03-01's
+  `ScoreBreakdown`/`scoreBreakdownOf` score-breakdown screen — visible in `git
+  status` since before this session started; the RDSPI concurrency model runs
+  multiple threads on one branch, file-locked at commit time, per
+  rdspi-workflow.md). This ticket's design (research.md §7, design.md Decision 6)
+  requires `scoreBreakdownOf` to apply the exact same riichi-stick/pot overlay
+  `settlementOf` does, so the two edits are not just adjacent but INTERLEAVED —
+  new lines inside their newly-added `bestReadingOf`/`scoreBreakdownOf`/
+  `ScoreBreakdown` code, not a separable hunk. `git diff` confirms this (checked
+  before committing): every hunk mixes their additions with mine at the line
+  level. Earlier steps (2, 4) touched these same two files for unrelated reasons
+  and were cleanly separable via `git add -p`, leaving their WIP untouched; this
+  step's changes are not, so this commit finalizes their T-008-03-01 work
+  alongside T-009-01-01's own — both fully tested (`just test`/`just check`
+  green), nothing lost, but a human reviewer should know the commit's diff spans
+  two tickets' worth of change for this reason.

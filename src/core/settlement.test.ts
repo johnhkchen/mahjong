@@ -13,6 +13,7 @@
 
 import { describe, expect, it } from 'vitest'
 import {
+  scoreBreakdownOf,
   settlementOf,
   tileId,
   type CopyIndex,
@@ -410,5 +411,263 @@ describe('ryuukyoku noten-bappu', () => {
 describe('guard', () => {
   it('throws when phase is still playing', () => {
     expect(() => settlementOf(baseState())).toThrow(RangeError)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// T-009-01-01: riichi sticks and the pot. Reuses the PINFU_HAND_13 ron fixture
+// (7700, base delta [-7700, 7700, 0, 0]) and the ryuukyoku tenpai fixtures
+// above — the point is proving the stick/pot overlay composes correctly with
+// settlement math already pinned elsewhere, not re-deriving han/fu.
+// ---------------------------------------------------------------------------
+describe('riichi sticks and the pot', () => {
+  it('ron: the winner recovers its own stick plus the whole pot; a non-riichi payer is untouched beyond the ordinary payment', () => {
+    // Winner (seat 1) and seat 3 both declared riichi (1000 each); the pot also
+    // carries 1000 in from an earlier hand's ryuukyoku: pot = 1000 + 2*1000.
+    const state: TableState = {
+      ...ronState({
+        hand13: PINFU_HAND_13,
+        winningKind: PINFU_WINNING_KIND,
+        winner: 1,
+        discarder: 0,
+        doras: PINFU_DORA,
+      }),
+      riichi: [false, true, false, true],
+      pot: 3000,
+    }
+    const deltas = settlementOf(state)
+    // Base ron [-7700, 7700, 0, 0]; sticks -1000 at seats 1 and 3; the pot
+    // (3000) added to the winner (seat 1).
+    expect(deltas).toEqual([-7700, 7700 - 1000 + 3000, 0, -1000])
+    // The agari conservation law (module header): a hand's deltas sum to
+    // exactly the INCOMING pot (this hand's own sticks cancel against the pot
+    // they fed) — never zero once any riichi carries a pot in.
+    expect(deltas.reduce((a, b) => a + b, 0)).toBe(1000)
+  })
+
+  it('ron with no riichi at all: deltas are untouched, still sum to zero (the pre-T-009-01-01 case)', () => {
+    const state = ronState({
+      hand13: PINFU_HAND_13,
+      winningKind: PINFU_WINNING_KIND,
+      winner: 1,
+      discarder: 0,
+      doras: PINFU_DORA,
+    })
+    expect(state.pot).toBe(0)
+    const deltas = settlementOf(state)
+    expect(deltas).toEqual([-7700, 7700, 0, 0])
+    expect(deltas.reduce((a, b) => a + b, 0)).toBe(0)
+  })
+
+  it('ryuukyoku: noten-bappu minus each riichi seat’s stick; the pot is untouched (unclaimed, carries forward)', () => {
+    const state: TableState = {
+      ...ryuukyokuState([TENPAI_HAND, TENPAI_HAND, NOTEN_HAND, NOTEN_HAND]),
+      riichi: [true, false, false, false],
+      pot: 2000,
+    }
+    const deltas = settlementOf(state)
+    // Base noten-bappu (2 tenpai): [+1500, +1500, -1500, -1500]; seat 0's own
+    // stick (-1000) on top; the pot (2000) is NOT distributed here.
+    expect(deltas).toEqual([1500 - 1000, 1500, -1500, -1500])
+    expect(deltas.reduce((a, b) => a + b, 0)).toBe(-1000)
+    expect(state.pot).toBe(2000) // unclaimed — game.ts carries this to the next hand
+  })
+
+  it('scoreBreakdownOf never disagrees with settlementOf, and reports the same pot both ways', () => {
+    const agari: TableState = {
+      ...ronState({
+        hand13: PINFU_HAND_13,
+        winningKind: PINFU_WINNING_KIND,
+        winner: 1,
+        discarder: 0,
+        doras: PINFU_DORA,
+      }),
+      riichi: [false, true, false, false],
+      pot: 1000,
+    }
+    const agariBreakdown = scoreBreakdownOf(agari)
+    expect(agariBreakdown.deltas).toEqual(settlementOf(agari))
+    expect(agariBreakdown.pot).toBe(1000)
+
+    const ryuukyoku: TableState = {
+      ...ryuukyokuState([TENPAI_HAND, NOTEN_HAND, NOTEN_HAND, NOTEN_HAND]),
+      riichi: [false, false, true, false],
+      pot: 1000,
+    }
+    const ryuukyokuBreakdown = scoreBreakdownOf(ryuukyoku)
+    expect(ryuukyokuBreakdown.deltas).toEqual(settlementOf(ryuukyoku))
+    expect(ryuukyokuBreakdown.pot).toBe(1000)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// scoreBreakdownOf — T-008-03-01's score-breakdown screen entrypoint. Reuses
+// every fixture above (no new hand construction): the point is proving the
+// SAME numbers settlementOf already prices are also visible as yaku/han/fu/
+// limit-tier/score detail, sourced from the winning READING, never
+// state.win.yaku's cross-reading union (design.md's Rejected Option A, restated
+// here as Fixture 6's regression: honitsu+ryanpeikou at 6han, NOT the 8han
+// union total, NOT chiitoitsu's 2han).
+// ---------------------------------------------------------------------------
+describe('scoreBreakdownOf', () => {
+  it('30fu/4han non-dealer ron: yaku detail, no limit tier, scores at 25000 + delta', () => {
+    const state = ronState({
+      hand13: PINFU_HAND_13,
+      winningKind: PINFU_WINNING_KIND,
+      winner: 1,
+      discarder: 0,
+      doras: PINFU_DORA,
+    })
+    const breakdown = scoreBreakdownOf(state)
+    expect(breakdown.kind).toBe('agari')
+    if (breakdown.kind !== 'agari') throw new Error('unreachable')
+    expect(breakdown.winner).toBe(1)
+    expect(breakdown.by).toBe('ron')
+    expect(breakdown.from).toBe(0)
+    // pinfu + tanyao + iipeikou, each 1 han (closed) — the priced reading's OWN list.
+    expect([...breakdown.yaku].sort((a, b) => a.name.localeCompare(b.name))).toEqual([
+      { name: 'iipeikou', han: 1 },
+      { name: 'pinfu', han: 1 },
+      { name: 'tanyao', han: 1 },
+    ])
+    expect(breakdown.doraHan).toBe(1)
+    expect(breakdown.han).toBe(4)
+    expect(breakdown.fu).toBe(30)
+    expect(breakdown.limitName).toBeNull()
+    expect(breakdown.points).toBe(7700)
+    expect(breakdown.deltas).toEqual([-7700, 7700, 0, 0])
+    expect(breakdown.scores).toEqual([25000 - 7700, 25000 + 7700, 25000, 25000])
+  })
+
+  it('same fixture, dealer ron: points and scores follow the dealer rate', () => {
+    const state = ronState({
+      hand13: PINFU_HAND_13,
+      winningKind: PINFU_WINNING_KIND,
+      winner: 0,
+      discarder: 1,
+      doras: PINFU_DORA,
+    })
+    const breakdown = scoreBreakdownOf(state)
+    expect(breakdown.kind).toBe('agari')
+    if (breakdown.kind !== 'agari') throw new Error('unreachable')
+    expect(breakdown.points).toBe(11600)
+    expect(breakdown.scores).toEqual([25000 + 11600, 25000 - 11600, 25000, 25000])
+  })
+
+  it('mangan cap (4han/40fu raw 2560): limitName mangan, fu suppressed, han still reported', () => {
+    const state = ronState({
+      hand13: MANGAN_CAP_HAND_13,
+      winningKind: MANGAN_CAP_WINNING_KIND,
+      winner: 1,
+      discarder: 0,
+      doras: MANGAN_CAP_DORA,
+    })
+    const breakdown = scoreBreakdownOf(state)
+    expect(breakdown.kind).toBe('agari')
+    if (breakdown.kind !== 'agari') throw new Error('unreachable')
+    expect(breakdown.limitName).toBe('mangan')
+    expect(breakdown.fu).toBeNull()
+    expect(breakdown.han).toBe(4)
+    expect(breakdown.points).toBe(8000)
+  })
+
+  it('yakuman (tsuuiisou, ron): flat 13han, no dora, no fu', () => {
+    const nonDealer = scoreBreakdownOf(
+      ronState({
+        hand13: TSUUIISOU_HAND_13,
+        winningKind: TSUUIISOU_WINNING_KIND,
+        winner: 1,
+        discarder: 0,
+      }),
+    )
+    expect(nonDealer.kind).toBe('agari')
+    if (nonDealer.kind !== 'agari') throw new Error('unreachable')
+    expect(nonDealer.yaku).toEqual([{ name: 'tsuuiisou', han: 13 }])
+    expect(nonDealer.doraHan).toBe(0)
+    expect(nonDealer.limitName).toBe('yakuman')
+    expect(nonDealer.fu).toBeNull()
+    expect(nonDealer.points).toBe(32000)
+
+    const dealer = scoreBreakdownOf(
+      ronState({
+        hand13: TSUUIISOU_HAND_13,
+        winningKind: TSUUIISOU_WINNING_KIND,
+        winner: 0,
+        discarder: 1,
+      }),
+    )
+    expect(dealer.kind).toBe('agari')
+    if (dealer.kind !== 'agari') throw new Error('unreachable')
+    expect(dealer.points).toBe(48000)
+  })
+
+  it('reading selection: prices honitsu+ryanpeikou (6han/haneman), not chiitoitsu, not the 8han union', () => {
+    const state = ronState({
+      hand13: h('112233m445566m5z'),
+      winningKind: '5z',
+      winner: 1,
+      discarder: 0,
+    })
+    const breakdown = scoreBreakdownOf(state)
+    expect(breakdown.kind).toBe('agari')
+    if (breakdown.kind !== 'agari') throw new Error('unreachable')
+    expect([...breakdown.yaku].sort((a, b) => a.name.localeCompare(b.name))).toEqual([
+      { name: 'honitsu', han: 3 },
+      { name: 'ryanpeikou', han: 3 },
+    ])
+    expect(breakdown.han).toBe(6)
+    expect(breakdown.limitName).toBe('haneman')
+    expect(breakdown.fu).toBeNull()
+    expect(breakdown.points).toBe(12000)
+  })
+
+  it('ryuukyoku: tenpai flags and scores follow the noten-bappu split, every tenpai count', () => {
+    const cases: Array<{
+      hands: readonly [
+        readonly TileKind[],
+        readonly TileKind[],
+        readonly TileKind[],
+        readonly TileKind[],
+      ]
+      tenpai: readonly [boolean, boolean, boolean, boolean]
+      scores: readonly [number, number, number, number]
+    }> = [
+      {
+        hands: [NOTEN_HAND, NOTEN_HAND, NOTEN_HAND, NOTEN_HAND],
+        tenpai: [false, false, false, false],
+        scores: [25000, 25000, 25000, 25000],
+      },
+      {
+        hands: [TENPAI_HAND, NOTEN_HAND, NOTEN_HAND, NOTEN_HAND],
+        tenpai: [true, false, false, false],
+        scores: [28000, 24000, 24000, 24000],
+      },
+      {
+        hands: [TENPAI_HAND, TENPAI_HAND, NOTEN_HAND, NOTEN_HAND],
+        tenpai: [true, true, false, false],
+        scores: [26500, 26500, 23500, 23500],
+      },
+      {
+        hands: [TENPAI_HAND, TENPAI_HAND, TENPAI_HAND, NOTEN_HAND],
+        tenpai: [true, true, true, false],
+        scores: [26000, 26000, 26000, 22000],
+      },
+      {
+        hands: [TENPAI_HAND, TENPAI_HAND, TENPAI_HAND, TENPAI_HAND],
+        tenpai: [true, true, true, true],
+        scores: [25000, 25000, 25000, 25000],
+      },
+    ]
+    for (const { hands, tenpai, scores } of cases) {
+      const breakdown = scoreBreakdownOf(ryuukyokuState(hands))
+      expect(breakdown.kind).toBe('ryuukyoku')
+      if (breakdown.kind !== 'ryuukyoku') throw new Error('unreachable')
+      expect(breakdown.tenpai).toEqual(tenpai)
+      expect(breakdown.scores).toEqual(scores)
+    }
+  })
+
+  it('throws when phase is still playing, matching settlementOf', () => {
+    expect(() => scoreBreakdownOf(baseState())).toThrow(RangeError)
   })
 })

@@ -47,15 +47,29 @@
 //   4 tenpai -> no exchange; 1 tenpai -> +3000 / -1000 each; 2 tenpai -> +1500
 //   each / -1500 each; 3 tenpai -> +1000 each / -3000.
 //
-// No honba, no riichi sticks: neither exists in TableState yet (no match/round
-// structure, no riichi declaration in the action vocabulary — han.ts's own
-// header), so this prices exactly one hand's base settlement.
+// No honba: it does not exist in TableState (no match/round structure to attach a
+// repeat counter to).
+//
+// RIICHI STICKS (T-009-01-01): every seat with state.riichi[seat] true already gave
+// up RIICHI_STICK the moment it declared -- riichiStickDeltas prices that -1000 per
+// locked seat, elementwise added to the ordinary ron/tsumo/noten-bappu deltas below.
+// An agari ALSO adds the whole running pot (state.pot -- incoming carried pot plus
+// every stick placed this hand) to the winner; a ryuukyoku distributes nothing further
+// (the pot sits unclaimed, carried to the next hand via game.ts's foldGame). THE
+// CONSERVATION LAW THIS BREAKS, DELIBERATELY: SeatDeltas no longer sums to zero on
+// every ended hand -- an agari's deltas sum to the incoming potIn (the sticks placed
+// THIS hand cancel exactly against the pot paid to the winner, leaving only what was
+// already carried in); a ryuukyoku's deltas sum to -RIICHI_STICK times the sticks
+// placed this hand (money that left seats' scores and now sits in the pot, not yet in
+// anyone's score). The invariant that DOES hold, across every hand boundary: running
+// scores plus the pot are conserved exactly at 4 x STARTING_SCORE (game.ts threads
+// potIn/pot hand-to-hand for precisely this reason).
 //
 // baseOf/roundUp100/ronDeltas/tsumoDeltas are exported alongside settlementOf: pure
 // arithmetic over (han, fu) / (base, seats), the tested seam T-008-01-04's grid suite
 // calls directly rather than reconstructing a TableState per han/fu cell.
 
-import type { Meld, TableState } from './record'
+import { RIICHI_STICK, type Meld, type TableState } from './record'
 import type { Seat } from './deal'
 import { decomposeAgari } from './agari'
 import { yakuOf, YAKUMAN_NAMES, type Win, type WinYakuName } from './yakuman'
@@ -65,8 +79,59 @@ import { fuOf } from './fu'
 import { shanten } from './shanten'
 import { kindOf, type TileKind } from './tiles'
 
-/** Four per-seat point deltas, indexed by Seat — always summing to zero. */
+/**
+ * Four per-seat point deltas, indexed by Seat. Summed to zero before riichi
+ * sticks existed; T-009-01-01 breaks that on any hand carrying a pot — see this
+ * module's header for the corrected invariant (scores + pot conserved instead).
+ */
 export type SeatDeltas = readonly [number, number, number, number]
+
+/** The named payment tiers above the han/fu formula — baseOf's fixed-base branches. */
+export type LimitName = 'mangan' | 'haneman' | 'baiman' | 'sanbaiman' | 'yakuman'
+
+/** One yaku (or yakuman) name priced into the winning reading, with its own han. */
+export interface YakuLine {
+  readonly name: WinYakuName
+  readonly han: number
+}
+
+/**
+ * The full priced detail of an ended hand — scoreBreakdownOf's return, a superset of
+ * settlementOf's deltas-only result. `scores` is `deltas` applied to the standard
+ * 25000-each starting total (STARTING_SCORE_DISPLAY below) — the addition every
+ * consumer would otherwise have to do itself, done once here so no caller performs
+ * arithmetic on point values at all.
+ */
+export type ScoreBreakdown =
+  | {
+      readonly kind: 'agari'
+      readonly winner: Seat
+      readonly by: 'ron' | 'tsumo'
+      /** The discarder, for a ron — null for a tsumo (no discard was claimed). */
+      readonly from: Seat | null
+      /** The winning reading's own yaku — never state.win.yaku's cross-reading union. */
+      readonly yaku: readonly YakuLine[]
+      readonly doraHan: number
+      /** Total han: every yaku line's han plus doraHan. */
+      readonly han: number
+      /** Null exactly when limitName is set — fu is not part of a limit hand's line. */
+      readonly fu: number | null
+      readonly limitName: LimitName | null
+      /** The winner's total gain — deltas[winner], the "...7700" / "...8000" figure. */
+      readonly points: number
+      readonly deltas: SeatDeltas
+      readonly scores: SeatDeltas
+      /** The stick pot the winner just took (T-009-01-01) — 0 when none was riding. */
+      readonly pot: number
+    }
+  | {
+      readonly kind: 'ryuukyoku'
+      readonly tenpai: readonly [boolean, boolean, boolean, boolean]
+      readonly deltas: SeatDeltas
+      readonly scores: SeatDeltas
+      /** The stick pot left unclaimed, carrying to the next hand (T-009-01-01). */
+      readonly pot: number
+    }
 
 /** Seat 0 is East, the dealer — the engine holds no match/round-rotation state. */
 const DEALER_SEAT: Seat = 0
@@ -82,6 +147,16 @@ const YAKUMAN_BASE = 8000
 
 /** The flat noten-bappu pot, split by tenpai count (research.md §3). */
 const NOTEN_BAPPU_POT = 3000
+
+/**
+ * The standard starting total per seat, duplicated from game.ts's identical
+ * STARTING_SCORE (importing it would cycle: game.ts already imports this module) — the
+ * DEALER_SEAT/ROUND_WIND/windKindOf duplication precedent applied to one more constant.
+ * scoreBreakdownOf's `scores` field is this hand's deltas applied to this baseline —
+ * this module has no game/GameRecord state, so "score" here means "this one hand,
+ * played from the standard starting total," not a persisted running total.
+ */
+const STARTING_SCORE_DISPLAY = 25000
 
 /** Membership test reusing the frozen catalog array — han.ts's own precedent. */
 const YAKUMAN_SET: ReadonlySet<string> = new Set(YAKUMAN_NAMES)
@@ -156,14 +231,33 @@ function hanOfNames(names: readonly WinYakuName[], melds: readonly Meld[], doraH
 }
 
 /**
- * Every non-yakuman reading's base points, for readings that carry their OWN
- * yaku (dora alone cannot price a reading — design.md's Rejected Option C).
- * Never empty when called on a legal non-yakuman win: the fold that produced
- * this win already required SOME reading to contribute a yaku to yakuOf's
- * union, so at least one candidate always survives the filter.
+ * One priced reading's full detail — pricedReadingCandidatesOf's/bestReadingOf's
+ * element, the retained-detail superset of what used to be a bare base-points number
+ * (T-008-03-01: the score-breakdown screen needs the yaku list and fu a plain base
+ * number discards).
  */
-function pricedReadingsOf(win: Win, doraHan: number): number[] {
-  const bases: number[] = []
+interface PricedReading {
+  readonly yaku: readonly YakuLine[]
+  readonly doraHan: number
+  readonly han: number
+  readonly fu: number
+  readonly base: number
+}
+
+/** `names` priced as YakuLine entries — one hanOf lookup per name, melds-aware. */
+function yakuLinesOf(names: readonly WinYakuName[], melds: readonly Meld[]): YakuLine[] {
+  return names.map((name) => ({ name, han: hanOf(name, melds) }))
+}
+
+/**
+ * Every non-yakuman reading's full priced detail, for readings that carry their OWN
+ * yaku (dora alone cannot price a reading — design.md's Rejected Option C). Never
+ * empty when called on a legal non-yakuman win: the fold that produced this win
+ * already required SOME reading to contribute a yaku to yakuOf's union, so at least
+ * one candidate always survives the filter.
+ */
+function pricedReadingCandidatesOf(win: Win, doraHan: number): PricedReading[] {
+  const candidates: PricedReading[] = []
   for (const decomposition of decomposeAgari(win.concealed, win.melds)) {
     if (decomposition.form === 'kokushi') continue
     const ctx: WinContext = {
@@ -175,20 +269,51 @@ function pricedReadingsOf(win: Win, doraHan: number): number[] {
       seatWind: win.seatWind,
       roundWind: win.roundWind,
     }
-    const yaku = readingYakuOf(ctx)
-    if (yaku.length === 0) continue
-    bases.push(baseOf(hanOfNames(yaku, win.melds, doraHan), fuOf(ctx)))
+    const names = readingYakuOf(ctx)
+    if (names.length === 0) continue
+    const fu = fuOf(ctx)
+    const han = hanOfNames(names, win.melds, doraHan)
+    candidates.push({ yaku: yakuLinesOf(names, win.melds), doraHan, han, fu, base: baseOf(han, fu) })
   }
-  return bases
+  return candidates
 }
 
-/** The whole win's base points: the yakuman flat tier, or the best reading's. */
-function bestBaseOf(win: Win, doraKinds: readonly TileKind[]): number {
+/**
+ * The whole win's priced detail: the yakuman flat tier (fu 0 — yakuman scoring
+ * ignores it, baseOf's own han>=13 branch never reads its fu argument), or the
+ * max-base candidate among every reading carrying its own yaku. ONE selection
+ * implementation — bestBaseOf below is a thin wrapper over this, so settlementOf and
+ * scoreBreakdownOf can never select two different readings for the same win.
+ */
+function bestReadingOf(win: Win, doraKinds: readonly TileKind[]): PricedReading {
   const yaku = yakuOf(win)
   if (yaku.some((name) => YAKUMAN_SET.has(name))) {
-    return baseOf(hanOfNames(yaku, win.melds, 0), 0)
+    const han = hanOfNames(yaku, win.melds, 0)
+    return { yaku: yakuLinesOf(yaku, win.melds), doraHan: 0, han, fu: 0, base: baseOf(han, 0) }
   }
-  return Math.max(...pricedReadingsOf(win, doraHanOf(win, doraKinds)))
+  const candidates = pricedReadingCandidatesOf(win, doraHanOf(win, doraKinds))
+  return candidates.reduce((best, candidate) => (candidate.base > best.base ? candidate : best))
+}
+
+/** The whole win's base points — bestReadingOf's base, kept as its own name for settlementOf's call site. */
+function bestBaseOf(win: Win, doraKinds: readonly TileKind[]): number {
+  return bestReadingOf(win, doraKinds).base
+}
+
+/**
+ * The named tier `base` falls in, or null when it is priced by the plain han/fu
+ * formula (below mangan). A pure name lookup on a number baseOf already computed —
+ * no new arithmetic, and the mangan-CAP case (a hand whose raw formula exceeds 2000,
+ * e.g. 4han40fu) is named 'mangan' by this same base-value check, exactly matching
+ * baseOf's own cap semantics (its doc comment) without re-deriving the cap.
+ */
+function limitNameOf(base: number): LimitName | null {
+  if (base >= YAKUMAN_BASE) return 'yakuman'
+  if (base === SANBAIMAN_BASE) return 'sanbaiman'
+  if (base === BAIMAN_BASE) return 'baiman'
+  if (base === HANEMAN_BASE) return 'haneman'
+  if (base === MANGAN_BASE) return 'mangan'
+  return null
 }
 
 /** Ron: the discarder alone pays; every other seat is untouched. */
@@ -237,24 +362,102 @@ function notenBappuOf(tenpai: readonly boolean[]): SeatDeltas {
 }
 
 /**
+ * Every locked seat already gave up RIICHI_STICK the instant it declared
+ * (T-009-01-01) — priced as its own delta contribution, independent of how the
+ * hand ends. Zero for every seat on a hand with no riichi in it.
+ */
+function riichiStickDeltas(state: TableState): SeatDeltas {
+  return [0, 1, 2, 3].map((seat) => (state.riichi[seat] ? -RIICHI_STICK : 0)) as unknown as SeatDeltas
+}
+
+/**
+ * Overlays riichi's two settlement effects onto a base ron/tsumo/noten-bappu
+ * payment: every locked seat's stick (riichiStickDeltas), then — agari only,
+ * `winner` non-null — the whole running pot (state.pot: incoming carried pot
+ * plus every stick placed this hand) added to the winner. A ryuukyoku
+ * (`winner` null) distributes nothing further; the pot rides to the next hand
+ * via game.ts's foldGame. The ONE place either settlementOf or
+ * scoreBreakdownOf touches riichi's payment, so they can never disagree on it
+ * (the module header's own discipline, extended to this ticket).
+ */
+function withRiichiSettlement(payment: SeatDeltas, state: TableState, winner: Seat | null): SeatDeltas {
+  const sticks = riichiStickDeltas(state)
+  const deltas = payment.map((value, seat) => value + sticks[seat]) as [number, number, number, number]
+  if (winner !== null) deltas[winner] += state.pot
+  return deltas
+}
+
+/**
  * The module's face: any ended TableState in, four per-seat point deltas out.
  * 'ryuukyoku' settles noten-bappu; 'agari' prices the win through the best
  * reading (or the yakuman flat tier) and splits the payment by ron/tsumo and
- * dealer/non-dealer. 'playing' is caller corruption — settlement on an
- * unended hand is domain-inapplicable, and throws loudly rather than guessing
- * (the fuOf-kokushi precedent).
+ * dealer/non-dealer. Either ending is then overlaid with riichi's stick/pot
+ * effects (withRiichiSettlement — T-009-01-01; see this module's header for
+ * the resulting, no-longer-always-zero per-hand sum). 'playing' is caller
+ * corruption — settlement on an unended hand is domain-inapplicable, and
+ * throws loudly rather than guessing (the fuOf-kokushi precedent).
  */
 export function settlementOf(state: TableState): SeatDeltas {
   if (state.phase === 'playing') {
     throw new RangeError("settlementOf: the hand has not ended — phase is 'playing'")
   }
   if (state.phase === 'ryuukyoku') {
-    return notenBappuOf(tenpaiFlagsOf(state))
+    return withRiichiSettlement(notenBappuOf(tenpaiFlagsOf(state)), state, null)
   }
   const win = winOf(state)
   const base = bestBaseOf(win, state.doras)
   const ended = state.win!
-  return ended.by === 'ron'
-    ? ronDeltas(base, ended.winner, ended.from)
-    : tsumoDeltas(base, ended.winner)
+  const payment =
+    ended.by === 'ron'
+      ? ronDeltas(base, ended.winner, ended.from)
+      : tsumoDeltas(base, ended.winner)
+  return withRiichiSettlement(payment, state, ended.winner)
+}
+
+/** `deltas` applied to the standard starting total — the score-breakdown screen's seat totals. */
+function seatScoresOf(deltas: SeatDeltas): SeatDeltas {
+  return deltas.map((delta) => STARTING_SCORE_DISPLAY + delta) as unknown as SeatDeltas
+}
+
+/**
+ * The score-breakdown screen's one entrypoint: any ended TableState in, the full
+ * priced detail out — a superset of settlementOf's deltas, sharing every arithmetic
+ * step with it (bestReadingOf/ronDeltas/tsumoDeltas/tenpaiFlagsOf/notenBappuOf are
+ * ALL the same calls settlementOf itself makes, so the two functions can never
+ * disagree on a payment). 'playing' throws, matching settlementOf's own guard —
+ * a breakdown of an unended hand is equally domain-inapplicable.
+ */
+export function scoreBreakdownOf(state: TableState): ScoreBreakdown {
+  if (state.phase === 'playing') {
+    throw new RangeError("scoreBreakdownOf: the hand has not ended — phase is 'playing'")
+  }
+  if (state.phase === 'ryuukyoku') {
+    const tenpai = tenpaiFlagsOf(state)
+    const deltas = withRiichiSettlement(notenBappuOf(tenpai), state, null)
+    return { kind: 'ryuukyoku', tenpai, deltas, scores: seatScoresOf(deltas), pot: state.pot }
+  }
+  const win = winOf(state)
+  const reading = bestReadingOf(win, state.doras)
+  const ended = state.win!
+  const payment =
+    ended.by === 'ron'
+      ? ronDeltas(reading.base, ended.winner, ended.from)
+      : tsumoDeltas(reading.base, ended.winner)
+  const deltas = withRiichiSettlement(payment, state, ended.winner)
+  const limitName = limitNameOf(reading.base)
+  return {
+    kind: 'agari',
+    winner: ended.winner,
+    by: ended.by,
+    from: ended.by === 'ron' ? ended.from : null,
+    yaku: reading.yaku,
+    doraHan: reading.doraHan,
+    han: reading.han,
+    fu: limitName === null ? reading.fu : null,
+    limitName,
+    points: deltas[ended.winner],
+    deltas,
+    scores: seatScoresOf(deltas),
+    pot: state.pot,
+  }
 }
