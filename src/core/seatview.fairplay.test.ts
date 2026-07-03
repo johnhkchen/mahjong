@@ -445,14 +445,15 @@ describe('hidden-permutation equivalence (the AC property)', () => {
 })
 
 describe('no tile id outside the public zones (the AC inclusion)', () => {
-  /** Every id the view carries must be in the independently computed public set. */
+  /**
+   * Every id the view carries must be in the independently computed public set.
+   * Violations are collected and asserted once — one expect per (state, seat), not
+   * per tile, keeps the every-prefix corpus sweep inside the suite's time budget.
+   */
   function expectIncluded(state: TableState, seat: Seat): void {
     const lawful = publicIds(state, seat)
-    for (const id of exposedTileIds(seatView(state, seat))) {
-      expect(lawful.has(id), `tile ${id} in seat ${seat}'s view is outside its public zones`).toBe(
-        true,
-      )
-    }
+    const leaked = exposedTileIds(seatView(state, seat)).filter((id) => !lawful.has(id))
+    expect(leaked, `seat ${seat}'s view carries tile ids outside its public zones`).toEqual([])
   }
 
   it('holds across the fc tsumogiri domain', () => {
