@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { foldRecord, legalActions, type HandAction, type TileId } from '../core'
+  import { foldGame, legalActions, type GameRecord, type HandAction, type TileId } from '../core'
   import {
     forcedAction,
     PLAYER,
     promptChoices,
+    seatScoresOf,
     settleWindow,
     tapClaim,
     tapDiscard,
@@ -30,15 +31,24 @@
   const { initialSeed = bootSeed() }: { initialSeed?: number } = $props()
   // svelte-ignore state_referenced_locally — initial capture is the intent: the prop
   // seeds the first game; newGame() owns every later value.
-  let seed = $state(initialSeed)
-  // The app's authoritative state is the hand record — the seed plus this growing
-  // action log. Appends only; everything on the table is re-derived by folding after
-  // every append (architecture.md: the table DOM is small, re-render is cheap), and
-  // every appended action is an element of legalActions output, selected through the
-  // drive seam — the app never computes legality.
-  let actions = $state<HandAction[]>([])
-  const table = $derived(foldRecord({ seed, actions }))
+  let gameSeed = $state(initialSeed)
+  // The app's authoritative state is the GAME record (T-008-03-02): a seed plus one
+  // action log per hand played so far, the active hand always the LAST element
+  // (game.ts's own GameRecord shape, mirrored directly rather than split across two
+  // $state variables — see design.md Decision 1). Appends only, same discipline as
+  // before: every pushed action is an element of legalActions output, selected
+  // through the drive seam — the app never computes legality. `foldGame` derives
+  // each hand's wall from `handSeedOf(gameSeed, handIndex)`, never `gameSeed`
+  // directly, so a `?seed=` pin still reproduces a whole game deterministically, not
+  // just its first hand.
+  let hands = $state<HandAction[][]>([[]])
+  const record = $derived<GameRecord>({ seed: gameSeed, hands })
+  const game = $derived(foldGame(record))
+  const table = $derived(game.table)
   const offered = $derived(legalActions(table))
+  // Carried scores, reindexed from GameState's Player-space into THIS hand's
+  // engine-Seat space — see drive.ts's seatScoresOf for why the remap is needed.
+  const seatScores = $derived(seatScoresOf(game.scores, game.dealer))
   // The player's claim prompt list — deduped for presentation — and his one win
   // offer: together non-empty exactly when forcedAction waits on the player's
   // window or win, so the prompt shows precisely while the loop pauses (one
@@ -56,9 +66,16 @@
   // counter landing visibly, action by action, instead of a whole bot round at once.
   const BOT_DELAY_MS = 250
 
+  // The active hand's growing action log — always the record's LAST element.
+  // Read fresh on every call (never cached) so a push always lands on whichever
+  // hand is currently active, across a next-hand append.
+  function activeHand(): HandAction[] {
+    return hands[hands.length - 1]
+  }
+
   function tap(tile: TileId) {
     const action = tapDiscard(offered, PLAYER, tile)
-    if (action !== null) actions.push(action)
+    if (action !== null) activeHand().push(action)
   }
 
   // The three window answers all fold through settleWindow: the player's tap is one
@@ -69,26 +86,39 @@
     const action = tapClaim(offered, PLAYER, choice)
     if (action === null) return
     const settled = settleWindow(table, offered, PLAYER, action)
-    if (settled !== null) actions.push(settled)
+    if (settled !== null) activeHand().push(settled)
   }
 
   function pass() {
     const settled = settleWindow(table, offered, PLAYER, null)
-    if (settled !== null) actions.push(settled)
+    if (settled !== null) activeHand().push(settled)
     else dismissed = true // nothing to fold — the houtei dismissal
   }
 
   function takeWin() {
     if (win === null) return
     const settled = settleWindow(table, offered, PLAYER, win)
-    if (settled !== null) actions.push(settled)
+    if (settled !== null) activeHand().push(settled)
   }
 
-  // End the current game and deal a fresh one: a new seed, an empty log, the houtei
-  // dismissal lowered. Everything else re-derives from the fold.
+  // Append a fresh empty hand to the record — the "next hand" control (on the
+  // score screen, HandEnd.svelte). Guarded defensively (the button itself is only
+  // ever rendered once the active hand has ended, HandEnd's own breakdown !== null
+  // gate): appending while still 'playing' would leave foldGame with two
+  // simultaneously-open hands, which it rejects.
+  function newHand() {
+    if (table.phase === 'playing') return
+    hands.push([])
+  }
+
+  // End the current GAME and start a fresh one: a new seed, a single empty hand,
+  // the houtei dismissal lowered. Everything else — scores, dealer, winds —
+  // re-derives from the fold. This absorbs the pre-T-008-03-02 new-game behavior
+  // (which only ever reset one hand) one level up: now it also drops any prior
+  // hands and their carried scores.
   function newGame() {
-    seed = drawSeed()
-    actions = []
+    gameSeed = drawSeed()
+    hands = [[]]
     dismissed = false
   }
 
@@ -102,7 +132,7 @@
   $effect(() => {
     const action = forcedAction(table, offered, PLAYER)
     if (action === null) return
-    const timer = setTimeout(() => actions.push(action), BOT_DELAY_MS)
+    const timer = setTimeout(() => activeHand().push(action), BOT_DELAY_MS)
     return () => clearTimeout(timer)
   })
 </script>
@@ -112,7 +142,7 @@
     <span>mahjong</span>
     <button class="new-game" onclick={newGame}>new game</button>
   </header>
-  <Table {table} ontap={tap} />
+  <Table {table} ontap={tap} scores={seatScores} onnext={newHand} />
   <!-- Visibility is the drive predicate family: claim choices or the win offer.
        The claimed tile is the window's when one is open (a claim offer implies
        one); the tsumo and houtei moments have none and the prompt renders

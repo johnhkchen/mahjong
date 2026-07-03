@@ -20,6 +20,7 @@ import {
   kindOf,
   seatView,
   type HandAction,
+  type Player,
   type Seat,
   type TableState,
   type TileId,
@@ -27,6 +28,31 @@ import {
 
 /** The human's seat — East, the dealer. Table.svelte presents the same fact. */
 export const PLAYER: Seat = 0
+
+/**
+ * GameState.scores (Player-indexed, game.ts) remapped into THIS hand's engine-Seat
+ * order — the same shape ScoreBreakdown.scores (settlement.ts) already uses, and the
+ * one HandEnd.svelte renders. Needed because `PLAYER` stays pinned at engine Seat 0
+ * every hand (T-008-03-02's own scoped decision: the interactive seat does not
+ * follow a rotating persistent identity around the table), while the OTHER three
+ * seats' Player occupants still rotate hand to hand as the dealer repeats/rotates
+ * (game.ts's foldGame) — passing `scores` straight through unindexed would mislabel
+ * money the first time the dealer ever moves off Player 0: `scores[1]` would no
+ * longer be the running total of whoever is actually sitting South. `(dealer + seat)
+ * % SEAT_COUNT` is game.ts's own private `playerOfSeat`, duplicated (the
+ * windKindOf-across-settlement.ts/game.ts precedent, applied one more time).
+ */
+export function seatScoresOf(
+  scores: readonly [number, number, number, number],
+  dealer: Player,
+): readonly [number, number, number, number] {
+  return [0, 1, 2, 3].map((seat) => scores[(dealer + seat) % 4]) as [
+    number,
+    number,
+    number,
+    number,
+  ]
+}
 
 /**
  * The claim-window call forms — what a seat may take from another seat's fresh

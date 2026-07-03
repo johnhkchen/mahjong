@@ -31,6 +31,7 @@ import {
   forcedAction,
   PLAYER,
   promptChoices,
+  seatScoresOf,
   settleWindow,
   tapClaim,
   tapDiscard,
@@ -164,6 +165,37 @@ function dealtLive(seed: number): readonly TileId[] {
 const botRonWindow = foldRecord({ seed: 3951, actions: tsumogiriTurns(dealtLive(3951), 1) })
 const furitenWindow = foldRecord({ seed: 23798, actions: tsumogiriTurns(dealtLive(23798), 21) })
 const yakulessWindow = foldRecord({ seed: 12754, actions: tsumogiriTurns(dealtLive(12754), 2) })
+
+// seatScoresOf (T-008-03-02) — the one place a game's dealer rotation becomes
+// visible in the UI at all under this ticket's scope (PLAYER stays pinned at
+// engine Seat 0 every hand; Table's wind labels are fixed to engine Seat, never
+// to a persistent Player — design.md Decision 2/3). This is a pure remap, so it
+// gets exact, fast unit coverage here rather than only through the slow,
+// imprecise full-App integration drive (app.controls.svelte.test.ts).
+describe('seatScoresOf', () => {
+  const SCORES: readonly [number, number, number, number] = [10000, 20000, 30000, 40000]
+
+  it('is the identity when the dealer is Player 0 — the un-rotated case', () => {
+    expect(seatScoresOf(SCORES, 0)).toEqual([10000, 20000, 30000, 40000])
+  })
+
+  it('remaps by playerOfSeat once the dealer has rotated: seat s holds Player (dealer+s)%4', () => {
+    // dealer=1: engine Seat 0 is Player 1, Seat 1 is Player 2, Seat 2 is Player 3,
+    // Seat 3 wraps back to Player 0 — hand-verified against game.ts's own
+    // playerOfSeat formula (research.md §3), not re-derived here.
+    expect(seatScoresOf(SCORES, 1)).toEqual([20000, 30000, 40000, 10000])
+    // dealer=3: Seat 0 is Player 3, then wraps 0, 1, 2.
+    expect(seatScoresOf(SCORES, 3)).toEqual([40000, 10000, 20000, 30000])
+  })
+
+  it('is a permutation for every dealer — sum conserved, every value present exactly once', () => {
+    for (const dealer of [0, 1, 2, 3] as const) {
+      const remapped = seatScoresOf(SCORES, dealer)
+      expect(remapped.reduce((a, b) => a + b, 0)).toBe(100000)
+      expect([...remapped].sort((a, b) => a - b)).toEqual([...SCORES].sort((a, b) => a - b))
+    }
+  })
+})
 
 describe('claimChoices', () => {
   it("returns exactly the player's offers, elements of the offered array itself", () => {
