@@ -55,4 +55,10 @@ if (cssFetch) {
 }
 
 const bytes = statSync(htmlPath).size
+
+const SIZE_CEILING_BYTES = 300_000 // ~300KB — the full pack (34 faces + 8 flowers) stays lean
+if (bytes > SIZE_CEILING_BYTES) {
+  fail('size-ceiling', `index.html is ${bytes} bytes — over the ${SIZE_CEILING_BYTES}-byte single-file ceiling`)
+}
+
 console.log(`verify-single-file: OK — dist/index.html is self-contained (${bytes} bytes)`)

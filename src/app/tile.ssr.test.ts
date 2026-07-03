@@ -7,7 +7,7 @@
 import { render } from 'svelte/server'
 import { describe, expect, it } from 'vitest'
 import { TILE_KINDS, tileId, type TileKind } from '../core'
-import Tile from './Tile.svelte'
+import Tile, { type FlowerKind } from './Tile.svelte'
 
 /** Every tile-looking text token — the same regex app.ssr.test.ts matches with. */
 function tileTokensOf(body: string): string[] {
@@ -171,6 +171,57 @@ describe('pip faces — pin coins and sou bamboo', () => {
 
   it('renders 34 pairwise-distinct faces', () => {
     expect(new Set(TILE_KINDS.map(chipOf)).size).toBe(TILE_KINDS.length)
+  })
+})
+
+// kind → its engraved glyph — the decorative flower family, never dealt while the
+// ruleset is Riichi (src/core/ has no flower concept at all).
+const FLOWER_GLYPHS: ReadonlyMap<FlowerKind, string> = new Map([
+  ['plum', '梅'],
+  ['orchid', '蘭'],
+  ['chrysanthemum', '菊'],
+  ['bamboo-flower', '竹'],
+  ['spring', '春'],
+  ['summer', '夏'],
+  ['autumn', '秋'],
+  ['winter', '冬'],
+])
+
+function flowerChipOf(kind: FlowerKind): string {
+  return render(Tile, { props: { id: kind } }).body
+}
+
+describe('flower faces — decorative only, never dealt', () => {
+  it('engraves each flower glyph on its own kind and no other flower kind', () => {
+    for (const [kind, glyph] of FLOWER_GLYPHS) {
+      expect(flowerChipOf(kind), kind).toContain(`>${glyph}<`)
+      for (const [other, otherGlyph] of FLOWER_GLYPHS) {
+        if (other !== kind) expect(flowerChipOf(kind), `${otherGlyph} on ${kind}`).not.toContain(otherGlyph)
+      }
+    }
+  })
+
+  it('never appears on any of the 34 real kinds a folded/dealt hand can contain', () => {
+    // TILE_KINDS is the exact domain buildWall/deal.ts ever draw from — no flower
+    // glyph may leak into a chip a real hand can ever render.
+    for (const kind of TILE_KINDS) {
+      const body = chipOf(kind)
+      for (const glyph of FLOWER_GLYPHS.values()) expect(body, `${glyph} on ${kind}`).not.toContain(glyph)
+    }
+  })
+
+  it('is disjoint from TILE_KINDS by identifier, not just by glyph', () => {
+    const flowerIds: ReadonlySet<string> = new Set(FLOWER_GLYPHS.keys())
+    for (const kind of TILE_KINDS) expect(flowerIds.has(kind)).toBe(false)
+  })
+
+  it('renders one aria-hidden SVG on an ivory face, same chassis as real tiles', () => {
+    for (const kind of FLOWER_GLYPHS.keys()) {
+      const body = flowerChipOf(kind)
+      expect(body.split('<svg').length - 1, kind).toBe(1)
+      expect(body, kind).toContain('aria-hidden="true"')
+      expect(body, kind).toContain('#f6f1e4')
+    }
   })
 })
 

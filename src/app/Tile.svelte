@@ -36,6 +36,33 @@
     '9': '九',
   }
 
+  export type FlowerKind =
+    | 'plum'
+    | 'orchid'
+    | 'chrysanthemum'
+    | 'bamboo-flower' // the plant 竹, distinct from the sou suit's bamboo sticks
+    | 'spring'
+    | 'summer'
+    | 'autumn'
+    | 'winter'
+
+  // Decorative-only faces prepaying the committed Taiwan 16-tile variant (owner,
+  // 2026-07-02) — never dealt while the ruleset is Riichi (src/core/ has no flower
+  // concept at all; nothing constructs a FlowerKind today). One shared ink flags
+  // the whole family as "not a suit" at a glance.
+  const FLOWER_INK = '#8a5a3c'
+
+  const FLOWERS: Record<FlowerKind, { glyph: string }> = {
+    plum: { glyph: '梅' },
+    orchid: { glyph: '蘭' },
+    chrysanthemum: { glyph: '菊' },
+    'bamboo-flower': { glyph: '竹' },
+    spring: { glyph: '春' },
+    summer: { glyph: '夏' },
+    autumn: { glyph: '秋' },
+    winter: { glyph: '冬' },
+  }
+
   // Pip inks: the suit's dominant color plus a fixed darker ring/edge shade, and
   // the shared red accent. Flat constants — no color math at render time.
   const PIN = { ink: '#2e5aa0', ring: '#1f3f73' }
@@ -167,13 +194,16 @@
   // match; the SVG art is aria-hidden presentation over it, and must never emit a
   // `[1-9][mpsz]` text node (the man face splits numeral and mark into separate
   // nodes; pin/sou faces are pure shapes with no text at all) nor an English wind
-  // word. All 34 faces and the back are settled art.
-  let { id }: { id: TileId | 'back' } = $props()
+  // word. All 34 faces and the back are settled art. A FlowerKind id renders its
+  // own decorative glyph and is never constructed from a real TileId — no caller
+  // wires one in yet (see FlowerKind above).
+  let { id }: { id: TileId | 'back' | FlowerKind } = $props()
 
   const kind = $derived(typeof id === 'number' ? kindOf(id) : null)
   const suit = $derived(kind === null ? null : suitOf(kind))
   const rank = $derived(kind === null ? null : rankOf(kind))
   const honor = $derived(kind === null ? undefined : HONORS[kind])
+  const flower = $derived(typeof id === 'string' && id !== 'back' ? FLOWERS[id] : undefined)
 </script>
 
 <span class="tile">
@@ -272,10 +302,22 @@
           />
           <line x1={s.x + 1.2} y1={scy} x2={s.x + s.w - 1.2} y2={scy} stroke="#f6f1e4" stroke-width="1.2" transform={xf} />
         {/each}
+      {:else if flower}
+        <!-- Flower face: single engraved glyph, honors-style, shared decorative ink. -->
+        <text
+          class="glyph"
+          x="30"
+          y="54"
+          text-anchor="middle"
+          font-size="40"
+          fill={FLOWER_INK}
+          stroke={FLOWER_INK}
+          stroke-width="0.75">{flower.glyph}</text
+        >
       {/if}
     {/if}
   </svg>
-  <span class="kind">{kind ?? 'tile back'}</span>
+  <span class="kind">{kind ?? (id !== 'back' ? id : 'tile back')}</span>
 </span>
 
 <style>
