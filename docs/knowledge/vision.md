@@ -8,7 +8,10 @@ tortoise's home court: a real, above-the-line project worth maintaining in its o
 frozen demo. Riichi is the assumed ruleset — the most popular among young players and the
 richest to teach (riichi, dora, yaku, han/fu scoring) — but the ruleset choice (Riichi vs.
 Chinese Classical vs. Hong Kong) is one the owner can still redirect; the engine isolates it so
-the redirect stays cheap.
+the redirect stays cheap. **Owner direction (2026-07-02): the first alternate ruleset, gated
+behind the definition of done, is Taiwanese 16-tile (16-tile hands, flowers in play, tai
+scoring); the tile aesthetic is Taiwan-style from the start, with the eight flower tiles drawn
+into the original art set.**
 
 ## The series bet
 

@@ -40,7 +40,10 @@ of build/maintenance effort**. Every admitted epic must advance at least one inv
 - Accounts, online multiplayer, matchmaking, native apps, real-money or gambling features,
   ranking ladders — all rejected outright, not deferred.
 - Alternate rulesets, tournament modes, and social features — until the definition of done (a
-  solitaire-tapper finishing a real hand and calling riichi on purpose) is met.
+  solitaire-tapper finishing a real hand and calling riichi on purpose) is met. The first
+  post-DoD ruleset is decided: **Taiwanese 16-tile** (owner, 2026-07-02) — core work should
+  keep hand-size/wall-composition assumptions named and behind the engine boundary so the
+  variant stays cheap.
 
 ## Tie-breaker
 

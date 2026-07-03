@@ -47,16 +47,23 @@ and off this board.
   phone. _(advances P4)_
 - **Tile motion + tile sorting** — riichi-stick placement, call and draw/discard animations, and
   auto-sort of the concealed hand. _(advances P4)_
-- **Original tile art pack** — a full drawn-from-scratch tile set (man/pin/sou, winds, dragons);
-  never a commercial set. **Playtest demand (2026-07-02, owner):** current tiles don't read as
-  mahjong tiles — the set should look like real (OG) tiles: ivory face, beveled body, proper
-  suit glyphs, and honor tiles drawn as the traditional kanji wind/dragon faces. _(advances P4)_
-- **Flower tiles** — owner playtest ask (2026-07-02): would like to see flower tiles.
-  **Ruleset fork to decide at pull time:** Riichi has no flowers (they belong to Chinese
-  Classical / Hong Kong sets); the charter defers alternate rulesets until the definition of
-  done. Options when pulled: (a) decorative only — flowers appear in art/menus/hand-end
-  flourish without entering play; (b) a post-DoD ruleset variant behind the engine boundary.
-  _(advances P4; (b) gated by charter)_
+- **Original tile art pack, Taiwan-style aesthetic** — a full drawn-from-scratch tile set;
+  never a commercial set. **Owner direction (2026-07-02, playtest):** tiles must read as real
+  mahjong tiles in the **Taiwanese style** — ivory face, beveled body, bold engraved suit
+  glyphs, honors as traditional kanji wind/dragon faces — and the drawn set **includes the
+  eight flower tiles** (四花 plum/orchid/chrysanthemum/bamboo + 四季 seasons) so the committed
+  Taiwan-variant needs no second art pull; flowers stay decorative (menus/flourish) while the
+  ruleset is Riichi. _(advances P4)_
+
+## Post-DoD — committed, gated behind the definition of done
+
+- **Taiwanese 16-tile ruleset variant** — owner decision (2026-07-02): the first alternate
+  ruleset is **Taiwan 16-tile** (16-tile hands / 5 sets + pair, 144-tile wall with the eight
+  flowers in play, flower replacement draws, tai (台) scoring, dealer streaks). Lands behind
+  the engine boundary per architecture.md — `src/core/` ruleset isolation is the enabling
+  invariant, and current core work must not hardcode away from it where cheap to avoid
+  (e.g. hand-size and wall-composition constants stay named, not scattered literals).
+  Gated: pulled only after the Riichi definition of done is met. _(advances P1, P4)_
 
 ## Tier 5 — Rigor as the series exhibit (P5: where the one-shot can't follow)
 
