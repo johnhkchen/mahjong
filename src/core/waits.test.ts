@@ -235,3 +235,189 @@ describe('contract', () => {
     expect(first).toEqual(second)
   })
 })
+
+// ---------------------------------------------------------------------------
+// Properties: constructed winners with CONTENT-HONEST melds (one shared 4-copy
+// budget across concealed sets and meld tiles), winner-minus-one tenpai hands, and
+// random multiset draws. The 34-kind biconditional restates the module's definition
+// (visible < 4 ∧ completes agari) with test-local counting — near-tautological on
+// purpose; independence lives in the fixtures above and in the construction-
+// guaranteed containment, which consults neither module nor oracle.
+// ---------------------------------------------------------------------------
+
+/** Every legal 3-tile set as kind indices: 34 triplets, then 21 runs. */
+const SET_CANDIDATES: readonly (readonly number[])[] = [
+  ...Array.from({ length: KIND_COUNT }, (_, k) => [k, k, k]),
+  ...Array.from({ length: 27 }, (_, k) => k)
+    .filter((k) => k % 9 <= 6)
+    .map((k) => [k, k + 1, k + 2]),
+]
+
+/** All kind indices, the filter base for budgeted choices. */
+const ALL_KINDS: readonly number[] = Array.from({ length: KIND_COUNT }, (_, k) => k)
+
+/** tileId at the next unconsumed copy of a kind — ids stay distinct per budget. */
+function nextCopyId(counts: number[], k: number): number {
+  return tileId(TILE_KINDS[k], counts[k] as 0 | 1 | 2 | 3)
+}
+
+/**
+ * Deterministic winner construction with REAL melds: slots 0..3 are melds for
+ * s < meldCount (form pon/chi/ankan by formChoices, target by setChoices, both
+ * mod the still-legal candidates — no rejection loops; ≤ 9 kinds are touched
+ * before any slot, so a legal pon/ankan kind and an unblocked chi start always
+ * remain) and concealed sets after (the agari.test.ts buildWinner pattern), then
+ * the pair. Meld tile ids consume running copy indices from the shared budget.
+ */
+function buildTenpaiParts(
+  meldCount: number,
+  formChoices: readonly number[],
+  setChoices: readonly number[],
+  pairChoice: number,
+): { concealed14: TileKind[]; melds: Meld[] } {
+  const counts = new Array<number>(KIND_COUNT).fill(0)
+  const melds: Meld[] = []
+  const hand: TileKind[] = []
+  for (let s = 0; s < 4; s += 1) {
+    if (s < meldCount) {
+      const form = (['pon', 'chi', 'ankan'] as const)[formChoices[s] % 3]
+      if (form === 'pon') {
+        const legal = ALL_KINDS.filter((k) => counts[k] + 3 <= COPIES_PER_KIND)
+        const k = legal[setChoices[s] % legal.length]
+        const claimed = nextCopyId(counts, k)
+        counts[k] += 1
+        const own: [number, number] = [nextCopyId(counts, k), 0]
+        counts[k] += 1
+        own[1] = nextCopyId(counts, k)
+        counts[k] += 1
+        melds.push({ type: 'pon', claimed, from: 3, own })
+      } else if (form === 'chi') {
+        const legal = ALL_KINDS.filter(
+          (k) =>
+            k < 27 &&
+            k % 9 <= 6 &&
+            counts[k] < COPIES_PER_KIND &&
+            counts[k + 1] < COPIES_PER_KIND &&
+            counts[k + 2] < COPIES_PER_KIND,
+        )
+        const k = legal[setChoices[s] % legal.length]
+        const claimed = nextCopyId(counts, k)
+        const own: [number, number] = [nextCopyId(counts, k + 1), nextCopyId(counts, k + 2)]
+        counts[k] += 1
+        counts[k + 1] += 1
+        counts[k + 2] += 1
+        melds.push({ type: 'chi', claimed, from: 3, own })
+      } else {
+        const legal = ALL_KINDS.filter((k) => counts[k] === 0)
+        const k = legal[setChoices[s] % legal.length]
+        melds.push({
+          type: 'ankan',
+          own: [tileId(TILE_KINDS[k], 0), tileId(TILE_KINDS[k], 1), tileId(TILE_KINDS[k], 2), tileId(TILE_KINDS[k], 3)],
+        })
+        counts[k] = COPIES_PER_KIND
+      }
+    } else {
+      const legal = SET_CANDIDATES.filter((tiles) =>
+        tiles.every((k) => counts[k] + tiles.filter((x) => x === k).length <= COPIES_PER_KIND),
+      )
+      const picked = legal[setChoices[s] % legal.length]
+      for (const k of picked) {
+        counts[k] += 1
+        hand.push(TILE_KINDS[k])
+      }
+    }
+  }
+  const pairable = ALL_KINDS.filter((k) => counts[k] + 2 <= COPIES_PER_KIND)
+  const pairKind = pairable[pairChoice % pairable.length]
+  hand.push(TILE_KINDS[pairKind], TILE_KINDS[pairKind])
+  return { concealed14: hand, melds }
+}
+
+/** Test-local visible counting — the convention's definition, stated inline. */
+function visibleOf(hand: readonly TileKind[], melds: readonly Meld[]): number[] {
+  const counts = new Array<number>(KIND_COUNT).fill(0)
+  for (const kind of hand) counts[kindIndexOf(kind)] += 1
+  for (const meld of melds) {
+    for (const tile of meld.own) counts[kindIndexOf(kindOf(tile))] += 1
+    if (meld.type !== 'ankan') counts[kindIndexOf(kindOf(meld.claimed))] += 1
+  }
+  return counts
+}
+
+const partsArb = fc
+  .record({
+    meldCount: fc.integer({ min: 0, max: 4 }),
+    formChoices: fc.array(fc.nat(10_000), { minLength: 4, maxLength: 4 }),
+    setChoices: fc.array(fc.nat(10_000), { minLength: 4, maxLength: 4 }),
+    pairChoice: fc.nat(10_000),
+  })
+  .map(({ meldCount, formChoices, setChoices, pairChoice }) => ({
+    meldCount,
+    ...buildTenpaiParts(meldCount, formChoices, setChoices, pairChoice),
+  }))
+
+/** A winner minus one concealed tile: tenpai by construction, `removed` a known wait. */
+const minusOneArb = fc.record({ parts: partsArb, at: fc.nat(13) }).map(({ parts, at }) => {
+  const hand13 = [...parts.concealed14]
+  const removed = hand13.splice(at % hand13.length, 1)[0]
+  return { hand13, melds: parts.melds, removed }
+})
+
+/** The 136-tile multiset as kinds — the draw pool for random 13-tile hands. */
+const POOL: readonly TileKind[] = TILE_KINDS.flatMap((kind) => [kind, kind, kind, kind])
+
+const randomHandArb = fc.shuffledSubarray([...POOL], { minLength: 13, maxLength: 13 })
+
+/** The definition, checked both directions over all 34 kinds. */
+function expectBiconditional(hand: readonly TileKind[], melds: readonly Meld[]): TileKind[] {
+  const result = waits(hand, melds)
+  const inWaits = new Set(result)
+  const visible = visibleOf(hand, melds)
+  for (let k = 0; k < KIND_COUNT; k += 1) {
+    const completes =
+      visible[k] < COPIES_PER_KIND && isAgari([...hand, TILE_KINDS[k]], melds)
+    expect(inWaits.has(TILE_KINDS[k]), `kind ${TILE_KINDS[k]}`).toBe(completes)
+  }
+  return result
+}
+
+describe('waits properties', () => {
+  it('constructed winners respect the wall and win (generator self-test)', () => {
+    fc.assert(
+      fc.property(partsArb, ({ meldCount, concealed14, melds }) => {
+        expect(concealed14.length).toBe(14 - 3 * meldCount)
+        expect(melds.length).toBe(meldCount)
+        expect(Math.max(...visibleOf(concealed14, melds))).toBeLessThanOrEqual(COPIES_PER_KIND)
+        expect(isAgari(concealed14, melds)).toBe(true)
+      }),
+      { numRuns: 200 },
+    )
+  })
+
+  it('a winner minus one tile waits on the removed kind, and exactly the defined set', () => {
+    fc.assert(
+      fc.property(minusOneArb, ({ hand13, melds, removed }) => {
+        const result = expectBiconditional(hand13, melds)
+        // Construction-guaranteed, oracle-free: the budget capped the removed
+        // kind at 4 visible copies INCLUDING the removed one, so after removal
+        // it is under 4 and its re-add is a known win — it must be waited on.
+        expect(result).toContain(removed)
+        // The contract order: ascending TILE_KINDS, strictly.
+        const indices = result.map(kindIndexOf)
+        expect(indices).toEqual([...indices].sort((x, y) => x - y))
+        expect(new Set(indices).size).toBe(indices.length)
+      }),
+      { numRuns: 300 },
+    )
+  })
+
+  it('random 13-tile draws match the definition; noten means empty waits', () => {
+    fc.assert(
+      fc.property(randomHandArb, (hand) => {
+        const result = expectBiconditional(hand, [])
+        expect(isTenpai(hand, [])).toBe(result.length > 0)
+      }),
+      { numRuns: 300 },
+    )
+  })
+})
