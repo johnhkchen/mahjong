@@ -2,9 +2,9 @@
   import { foldRecord, legalActions, type HandAction, type TileId } from '../core'
   import {
     forcedAction,
-    passClaim,
     PLAYER,
     promptChoices,
+    settleWindow,
     tapClaim,
     tapDiscard,
     winChoice,
@@ -46,30 +46,38 @@
     if (action !== null) actions.push(action)
   }
 
+  // The three window answers all fold through settleWindow: the player's tap is one
+  // candidate among the bots' callPolicy answers, and the earliest offered non-draw
+  // wins the window (offered position is the rules' precedence) — a tapped chi can
+  // lose to a bot's pon, any claim to a bot's ron, exactly as at a real table.
   function claim(choice: ClaimChoice) {
     const action = tapClaim(offered, PLAYER, choice)
-    if (action !== null) actions.push(action)
+    if (action === null) return
+    const settled = settleWindow(table, offered, PLAYER, action)
+    if (settled !== null) actions.push(settled)
   }
 
   function pass() {
-    const action = passClaim(offered, PLAYER)
-    if (action !== null) actions.push(action)
-    else dismissed = true // no draw to decline into — the houtei dismissal
+    const settled = settleWindow(table, offered, PLAYER, null)
+    if (settled !== null) actions.push(settled)
+    else dismissed = true // nothing to fold — the houtei dismissal
   }
 
   function takeWin() {
-    if (win !== null) actions.push(win)
+    if (win === null) return
+    const settled = settleWindow(table, offered, PLAYER, win)
+    if (settled !== null) actions.push(settled)
   }
 
   // The reactive fixed point that runs the table: each append re-folds and re-derives
-  // `offered`, which re-runs this effect — draws (the player's included) and bot
-  // tsumogiri land one per tick until forcedAction yields null, i.e. the player's
-  // discard choice, his claim window (the prompt owns it: claim/pass taps resolve
-  // the wait), or the empty offering at ryuukyoku. Cleanup drops the pending timer
-  // on re-run and unmount. $effect never runs in SSR, where the dealt fold renders
-  // statically.
+  // `offered`, which re-runs this effect — draws (the player's included) and the
+  // bots' policy decisions (discards, calls, wins) land one per tick until
+  // forcedAction yields null, i.e. the player's discard choice, his claim window
+  // (the prompt owns it: claim/pass/win taps resolve the wait through settleWindow),
+  // or the empty offering at ryuukyoku. Cleanup drops the pending timer on re-run
+  // and unmount. $effect never runs in SSR, where the dealt fold renders statically.
   $effect(() => {
-    const action = forcedAction(offered, PLAYER)
+    const action = forcedAction(table, offered, PLAYER)
     if (action === null) return
     const timer = setTimeout(() => actions.push(action), BOT_DELAY_MS)
     return () => clearTimeout(timer)

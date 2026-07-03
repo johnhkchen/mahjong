@@ -1,23 +1,37 @@
 // The AC's app test: the tap handlers and the auto-advance loop build actions via
-// legalActions rather than computing legality locally. The teeth are identity and the
-// doctored list — a returned action IS an element of the offered array (toBe, not
-// shape), and an offer removed from the list is rejected even though the fold says
-// it would hold, so legality can be coming from nowhere but the list. This ticket's
-// additions: the claim window. forcedAction waits (null) exactly when the PLAYER
-// holds a claim offer — bot-only windows auto-pass by forcing the head draw —
-// and tapClaim/passClaim are complementary selectors over the same offered set:
-// the call by (type, uses), distinct chi variants distinguishable, or the declining
-// draw. Two walks integrate it: the seed-1 hand under pass-everything (trajectory
-// byte-identical to unclaimed play), and a seed-3 chi driven through the seam.
+// legalActions rather than computing legality locally — and, since T-006-03-03, the
+// three non-PLAYER seats decide through core's policy pair instead of the tsumogiri/
+// auto-pass placeholder. The teeth are identity and the doctored list — a returned
+// action IS an element of the offered array (toBe, not shape), and an offer removed
+// from the list is rejected (and a removed bot offer never consulted) even though
+// the fold would accept it — plus double-keying for every bot expectation: a frozen
+// literal AND an independent oracle (the policy's own answer over a fresh seatView
+// projection, or shanten re-derivation), the policy sweep's convention. forcedAction
+// waits (null) exactly when the PLAYER holds a claim or win offer; bot-only windows
+// settle through callPolicy (claims taken when the accept rule passes, rons always,
+// declines letting the window go stale); bot turns discard by policy — tedashi, not
+// tsumogiri — and take their tsumo. settleWindow is the one arbitration where the
+// player's tap joins the bots' answers by offered position (the rules' precedence).
+// The walks integrate all of it deal → end through the same functions App.svelte runs.
 
 import { describe, expect, it } from 'vitest'
-import { foldRecord, legalActions, type HandAction, type Seat, type TileId } from '../core'
+import {
+  callPolicy,
+  discardPolicy,
+  foldRecord,
+  kindOf,
+  legalActions,
+  seatView,
+  shanten,
+  type HandAction,
+  type TileId,
+} from '../core'
 import {
   claimChoices,
   forcedAction,
-  passClaim,
   PLAYER,
   promptChoices,
+  settleWindow,
   tapClaim,
   tapDiscard,
   winChoice,
@@ -241,10 +255,11 @@ describe('promptChoices', () => {
       expect(promptChoices(offered, PLAYER).length === 0).toBe(
         claimChoices(offered, PLAYER).length === 0,
       )
-      // And therefore: the prompt shows ⇔ forcedAction waits on a claim (pass exists).
-      expect(promptChoices(offered, PLAYER).length > 0).toBe(
-        passClaim(offered, PLAYER) !== null,
-      )
+      // And therefore: wherever the prompt shows, the loop waits — the prompt owns
+      // the state, and only its taps (through settleWindow) may resolve it.
+      if (promptChoices(offered, PLAYER).length > 0) {
+        expect(forcedAction(state, offered, PLAYER)).toBeNull()
+      }
     }
   })
 })
@@ -308,47 +323,106 @@ describe('tapClaim', () => {
   })
 })
 
-describe('passClaim', () => {
-  it("returns the head draw — the player's own — at the race window", () => {
-    // Declining IS taking the next draw; here the next draw is East's, and taking it
-    // is precisely what lets the claim go stale.
+describe('settleWindow', () => {
+  it("resolves the player's decline to an accepting bot's claim — seed 3: South's pon", () => {
     const offered = legalActions(raceWindow3)
-    expect(offered[0]).toEqual({ type: 'draw', seat: 0 })
-    expect(passClaim(offered, PLAYER)).toBe(offered[0])
+    const settled = settleWindow(raceWindow3, offered, PLAYER, null)
+    // Frozen (mined): South's pon strictly cuts its shanten and keeps a yaku
+    // anchor, so the accept rule takes it — the window does not go stale.
+    expect(settled).toEqual({ type: 'pon', seat: 1, tile: 42, uses: SOUTH_PON_3.uses })
+    expect(offered).toContain(settled) // identity: an element, never a lookalike
+    // Oracle: the settled element IS South's own callPolicy answer, by reference.
+    expect(settled).toBe(callPolicy(seatView(raceWindow3, 1), offered))
   })
 
-  it("returns the head draw — a bot's — when the player's pon sits behind it", () => {
+  it("outranks the player's tapped chi with the bot's pon — offered position is precedence", () => {
+    const offered = legalActions(raceWindow3)
+    const chi = tapClaim(offered, PLAYER, EAST_CHI_A)!
+    const settled = settleWindow(raceWindow3, offered, PLAYER, chi)
+    expect(settled).not.toBe(chi)
+    expect(settled).toMatchObject({ type: 'pon', seat: 1 })
+    // The winner sits earlier in the frozen order — pons before chis, per legal.ts.
+    expect(offered.indexOf(settled!)).toBeLessThan(offered.indexOf(chi))
+  })
+
+  it('folds the player claim itself when no bot holds an offer — seed 15, the pure player window', () => {
+    const offered = legalActions(mixedWindow15)
+    // Mined: every ron/claim offer at this window is East's own.
+    expect(
+      offered.some(
+        (a) =>
+          (a.type === 'ron' || a.type === 'chi' || a.type === 'pon' || a.type === 'daiminkan') &&
+          a.seat !== PLAYER,
+      ),
+    ).toBe(false)
+    const pon = tapClaim(offered, PLAYER, { type: 'pon', uses: [44, 47] })!
+    expect(settleWindow(mixedWindow15, offered, PLAYER, pon)).toBe(pon)
+  })
+
+  it('returns the head draw when the player and every consulted bot decline — seed 5', () => {
     const offered = legalActions(ponWindow5)
     expect(offered[0]).toEqual({ type: 'draw', seat: 3 })
-    expect(passClaim(offered, PLAYER)).toBe(offered[0])
+    // Oracle: North's four chi variants all fail the accept rule (mined) — its own
+    // callPolicy answer is the decline, the offered draw.
+    expect(callPolicy(seatView(ponWindow5, 3), offered)).toBe(offered[0])
+    expect(settleWindow(ponWindow5, offered, PLAYER, null)).toBe(offered[0])
   })
 
-  it('returns null when there is nothing of the player\'s to decline', () => {
-    for (const state of [beforeSouthDraw, dealt, afterEastDraw, afterSouthDraw, exhausted]) {
-      expect(passClaim(legalActions(state), PLAYER)).toBeNull()
+  it('settles the tsumo to itself — no window, no bot offers, the degenerate arbitration', () => {
+    const offered = legalActions(tsumoPoint)
+    const win = winChoice(offered, PLAYER)!
+    expect(settleWindow(tsumoPoint, offered, PLAYER, win)).toBe(win)
+  })
+
+  it('settles the shanpon ron to itself and its decline to the head draw', () => {
+    const offered = legalActions(shanponWindow) // no bot offers here (mined)
+    const win = winChoice(offered, PLAYER)!
+    expect(settleWindow(shanponWindow, offered, PLAYER, win)).toBe(win)
+    // Declining the ron AND the coexisting claims is the one head draw — East's own.
+    expect(shanponWindow.drawn).toBeNull()
+    expect(settleWindow(shanponWindow, offered, PLAYER, null)).toBe(offered[0])
+    // The ron-only window declines the same way: into the bot's head draw.
+    const ronOnly = legalActions(ronOnlyWindow)
+    expect(settleWindow(ronOnlyWindow, ronOnly, PLAYER, null)).toBe(ronOnly[0])
+  })
+
+  it('returns null at the declined player-only houtei — the dismissal — and the ron when taken', () => {
+    const offered = legalActions(houteiEnd)
+    // No draw exists to decline into: nothing to fold, the prompt owner dismisses.
+    expect(settleWindow(houteiEnd, offered, PLAYER, null)).toBeNull()
+    const ron = winChoice(offered, PLAYER)!
+    expect(settleWindow(houteiEnd, offered, PLAYER, ron)).toBe(ron)
+  })
+
+  it('returns null where nothing is declinable — windowless states (the old pass geometry)', () => {
+    for (const state of [dealt, afterEastDraw, afterSouthDraw, exhausted]) {
+      expect(settleWindow(state, legalActions(state), PLAYER, null)).toBeNull()
     }
+    // Declining a tsumo IS discarding — the tap surface is live; nothing settles.
+    expect(settleWindow(tsumoPoint, legalActions(tsumoPoint), PLAYER, null)).toBeNull()
   })
 
-  it('returns the head draw when the player holds only a ron — declining a win is declining a claim', () => {
-    const offered = legalActions(ronOnlyWindow)
-    expect(claimChoices(offered, PLAYER)).toEqual([])
-    expect(passClaim(offered, PLAYER)).toBe(offered[0])
-    // And at the shanpon window, where the ron sits beside real claims — the same
-    // one head draw declines everything at once (East's own draw, the race shape).
-    const shanpon = legalActions(shanponWindow)
-    expect(shanpon[0]).toEqual({ type: 'draw', seat: 0 })
-    expect(passClaim(shanpon, PLAYER)).toBe(shanpon[0])
+  it('never consults a doctored-away bot offer — the accept comes from nowhere but the list', () => {
+    const offered = legalActions(raceWindow3)
+    const doctored = offered.filter((a) => !(a.type === 'pon' && a.seat === 1))
+    // With South's pon gone from the list, the decline settles to the head draw
+    // even though the fold would accept the pon (it is this window's whole point).
+    expect(settleWindow(raceWindow3, doctored, PLAYER, null)).toBe(doctored[0])
+    // And the player's chi now wins the window it loses with the pon present.
+    const chi = tapClaim(doctored, PLAYER, EAST_CHI_A)!
+    expect(settleWindow(raceWindow3, doctored, PLAYER, chi)).toBe(chi)
   })
 
-  it('returns null at the win moments with no draw to decline into: tsumo point, houtei', () => {
-    // Declining a tsumo IS discarding — the tap surface is live, no pass exists.
-    expect(passClaim(legalActions(tsumoPoint), PLAYER)).toBeNull()
-    // A houtei offering has no draw at the head — nothing to build; the decline is
-    // the prompt owner's presentation fact, not an action.
-    expect(passClaim(legalActions(houteiEnd), PLAYER)).toBeNull()
+  it('ignores a lookalike chosen — only elements of the offered list settle', () => {
+    const offered = legalActions(mixedWindow15)
+    const pon = tapClaim(offered, PLAYER, { type: 'pon', uses: [44, 47] })!
+    const lookalike: HandAction = { ...pon }
+    // Shape-equal to the offered pon but not the element itself: ignored, and the
+    // decline path settles instead (the head draw — the player held offers).
+    expect(settleWindow(mixedWindow15, offered, PLAYER, lookalike)).toBe(offered[0])
   })
 
-  it('is complementary to forcedAction at every anchored state — exactly one driver applies', () => {
+  it('is complementary to forcedAction at every anchored state — the loop never races the prompt', () => {
     const anchors = [
       dealt,
       afterEastDraw,
@@ -357,6 +431,7 @@ describe('passClaim', () => {
       raceWindow3,
       ponWindow5,
       mixedWindow15,
+      kanWindow212,
       exhausted,
       tsumoPoint,
       shanponWindow,
@@ -368,24 +443,23 @@ describe('passClaim', () => {
     ]
     for (const state of anchors) {
       const offered = legalActions(state)
-      const forced = forcedAction(offered, PLAYER)
-      const pass = passClaim(offered, PLAYER)
-      // Never both: the loop cannot race the prompt.
-      expect(forced === null || pass === null).toBe(true)
-      // The pass exists ⇔ the player holds something to decline AND a head draw
-      // exists to decline into (wins joined claims in the predicate family).
-      const holds =
+      const forced = forcedAction(state, offered, PLAYER)
+      const prompts =
         claimChoices(offered, PLAYER).length > 0 || winChoice(offered, PLAYER) !== null
-      expect(pass !== null).toBe(holds && offered[0]?.type === 'draw')
-      // Both null only at tap/halt states: the player's discard choice (the tsumo
-      // point included — its decline IS a discard tap), a ron-headed ryuukyoku
-      // offering (the player's houtei tap, or the bots resting), or the end.
-      if (forced === null && pass === null) {
+      // The prompt up ⇒ the loop waits; its taps and its decline own the state.
+      expect(forced === null || !prompts).toBe(true)
+      // The prompt's decline always resolves — a fold, or the houtei dismissal.
+      if (prompts) {
+        const declined = settleWindow(state, offered, PLAYER, null)
+        expect(declined === null).toBe(offered[0]?.type !== 'draw')
+        if (declined !== null) expect(offered).toContain(declined)
+      }
+      // Neither driver ⇒ a tap or halt state: the player's discard choice (the
+      // tsumo point included — its decline IS a discard tap) or the ended hand.
+      if (forced === null && !prompts) {
         const head = offered[0]
         expect(
-          head === undefined ||
-            (head.type === 'discard' && head.seat === PLAYER) ||
-            head.type === 'ron',
+          head === undefined || (head.type === 'discard' && head.seat === PLAYER),
         ).toBe(true)
       }
     }
@@ -446,13 +520,13 @@ describe('winChoice', () => {
     }
   })
 
-  it("is null for the player at a BOT's win window — seat-scoped, and the bot never takes it", () => {
+  it("is null for the player at a BOT's win window — seat-scoped; the loop folds the bot's ron", () => {
     const offered = legalActions(botRonWindow)
     // The offer is real — for seat 3. Through the player lens there is nothing.
     expect(winChoice(offered, 3)).toEqual({ type: 'ron', seat: 3, tile: 72 })
     expect(winChoice(offered, PLAYER)).toBeNull()
-    // And the loop rolls past it: the bots' rons go stale like their calls.
-    expect(forcedAction(offered, PLAYER)).toBe(offered[0])
+    // And the loop takes it: a bot never declines its ron (callPolicy's first arm).
+    expect(forcedAction(botRonWindow, offered, PLAYER)).toBe(offered[1])
   })
 
   it('is null where core withholds the offer: furiten and yakuless completions', () => {
@@ -521,49 +595,64 @@ describe('forcedAction', () => {
   it("forces the player's own draw — a draw is never a choice", () => {
     const offered = legalActions(dealt)
     expect(offered).toHaveLength(1)
-    expect(forcedAction(offered, PLAYER)).toBe(offered[0])
+    expect(forcedAction(dealt, offered, PLAYER)).toBe(offered[0])
   })
 
-  it("forces a bot seat's draw through a bot-only window — placeholder bots auto-pass", () => {
-    // East's fresh 8s discard is chi-able by South here, so the offering is no longer
-    // a singleton — but no offer is the player's, so the draw at the head still wins
-    // and the window goes stale.
+  it('settles a bot-only window whose consulted bot declines — the draw is forced, the window stales', () => {
+    // East's fresh 8s discard is chi-able by South here, so the offering is no
+    // longer a singleton — but the accept rule declines the chi (mined), so the
+    // settle falls to the head draw: the decline doctrine, now a decision rather
+    // than the placeholder's blanket auto-pass.
     const offered = legalActions(beforeSouthDraw)
     expect(offered[0]).toEqual({ type: 'draw', seat: 1 })
-    expect(forcedAction(offered, PLAYER)).toBe(offered[0])
+    // Oracle: South's own callPolicy answer is the decline (the offered draw).
+    expect(callPolicy(seatView(beforeSouthDraw, 1), offered)).toBe(offered[0])
+    expect(forcedAction(beforeSouthDraw, offered, PLAYER)).toBe(offered[0])
   })
 
-  it("waits (null) when the player may claim — even though the head is the player's own draw", () => {
-    // The seed-3 geometry: North discarded, the turn advanced to East, and East may
-    // chi. Forcing "the player's draw" here would silently pass the player's claim;
-    // the claim guard precedes the draw arm for exactly this state.
+  it('waits (null) when the player may claim — even though a bot claim is accepted behind the prompt', () => {
+    // Seed 3 holds offers for BOTH sides (East's chis, South's pon — an accept,
+    // mined): the player guard precedes the bot settle, so the state waits, and
+    // South's pon folds only through the prompt's answer (the settleWindow suite).
     const offered = legalActions(raceWindow3)
     expect(offered[0]).toEqual({ type: 'draw', seat: 0 })
-    expect(forcedAction(offered, PLAYER)).toBeNull()
+    expect(forcedAction(raceWindow3, offered, PLAYER)).toBeNull()
   })
 
   it("waits (null) when the player's pon sits behind a bot's draw obligation", () => {
     const offered = legalActions(ponWindow5)
     expect(offered[0]).toEqual({ type: 'draw', seat: 3 })
-    expect(forcedAction(offered, PLAYER)).toBeNull()
+    expect(forcedAction(ponWindow5, offered, PLAYER)).toBeNull()
   })
 
-  it('forces bot tsumogiri: the last offered discard, which is the drawn tile', () => {
+  it("routes a bot's discard obligation to discardPolicy — a tedashi, not tsumogiri", () => {
     const offered = legalActions(afterSouthDraw)
-    const forced = forcedAction(offered, PLAYER)
-    expect(forced).toBe(offered[offered.length - 1])
+    const forced = forcedAction(afterSouthDraw, offered, PLAYER)
+    // Identity with the policy's own choice over South's projected view.
+    expect(forced).toBe(discardPolicy(seatView(afterSouthDraw, 1), offered))
     if (forced?.type !== 'discard') throw new Error('a bot mid-turn forces a discard')
-    // Cross-check against the fold's independent statement of what was drawn.
-    expect(forced.tile).toBe(afterSouthDraw.drawn)
+    // Frozen (mined): tile 120 — a HAND tile, not the drawn 60. The placeholder's
+    // tsumogiri is gone: the drawn tile ties at shanten 3 but loses the
+    // center-distance tie-break.
+    expect(forced.tile).toBe(120)
+    expect(forced.tile).not.toBe(afterSouthDraw.drawn)
+    // Oracle: no offered discard beats the chosen one's resulting shanten.
+    const pool = [...afterSouthDraw.hands[1], afterSouthDraw.drawn!]
+    const after = (tile: TileId) =>
+      shanten(pool.filter((t) => t !== tile).map(kindOf), afterSouthDraw.melds[1])
+    const discards = offered.filter(
+      (a): a is Extract<HandAction, { type: 'discard' }> => a.type === 'discard',
+    )
+    expect(after(forced.tile)).toBe(Math.min(...discards.map((a) => after(a.tile))))
   })
 
   it("never forces the player's discard — that is the tap's choice", () => {
-    expect(forcedAction(legalActions(afterEastDraw), PLAYER)).toBeNull()
+    expect(forcedAction(afterEastDraw, legalActions(afterEastDraw), PLAYER)).toBeNull()
   })
 
   it('returns null on the empty offering of an ended hand — the halt condition', () => {
     expect(legalActions(exhausted)).toEqual([])
-    expect(forcedAction([], PLAYER)).toBeNull()
+    expect(forcedAction(exhausted, [], PLAYER)).toBeNull()
   })
 
   it("waits (null) at a ron-ONLY window behind a bot's draw — the auto-pass regression", () => {
@@ -573,83 +662,98 @@ describe('forcedAction', () => {
     const offered = legalActions(ronOnlyWindow)
     expect(offered[0]).toEqual({ type: 'draw', seat: 3 })
     expect(claimChoices(offered, PLAYER)).toEqual([])
-    expect(forcedAction(offered, PLAYER)).toBeNull()
+    expect(forcedAction(ronOnlyWindow, offered, PLAYER)).toBeNull()
   })
 
   it("waits (null) at the shanpon window — a win and claims behind the player's own draw", () => {
     const offered = legalActions(shanponWindow)
     expect(offered[0]).toEqual({ type: 'draw', seat: 0 })
-    expect(forcedAction(offered, PLAYER)).toBeNull()
+    expect(forcedAction(shanponWindow, offered, PLAYER)).toBeNull()
   })
 
   it('waits (null) at the tsumo point — the discard choice and the win are both taps', () => {
-    expect(forcedAction(legalActions(tsumoPoint), PLAYER)).toBeNull()
+    expect(forcedAction(tsumoPoint, legalActions(tsumoPoint), PLAYER)).toBeNull()
   })
 
-  it("waits (null) at the player's houtei; halts (null) at a bot's — neither is driven", () => {
+  it("waits (null) at the player's houtei; folds a BOT's houtei ron — the carve-out win", () => {
     // The player's: the guard owns it (rons-only offering, his among them).
-    expect(forcedAction(legalActions(houteiEnd), PLAYER)).toBeNull()
-    // A bot's: seed 147508 (core's houtei anchor, seat 3 wins) — no draw, no
-    // discard, nothing the player holds: the fallthrough halt. The bots pass
-    // their houtei rons and the hand rests at ryuukyoku.
-    const botHoutei = foldRecord({ seed: 147508, actions: tsumogiriTurns(dealtLive(147508), 70) })
+    expect(forcedAction(houteiEnd, legalActions(houteiEnd), PLAYER)).toBeNull()
+    // A bot's: seed 147508 (core's houtei anchor, seat 3 wins). The placeholder
+    // rested the hand here; a bot never declines its offered ron, so the loop now
+    // folds the win out of the ended hand.
+    const prefix = tsumogiriTurns(dealtLive(147508), 70)
+    const botHoutei = foldRecord({ seed: 147508, actions: prefix })
     expect(botHoutei.phase).toBe('ryuukyoku')
     const offered = legalActions(botHoutei)
     expect(offered).toHaveLength(1)
-    expect(offered[0]).toMatchObject({ type: 'ron', seat: 3 })
-    expect(forcedAction(offered, PLAYER)).toBeNull()
-    expect(passClaim(offered, PLAYER)).toBeNull()
+    expect(offered[0]).toEqual({ type: 'ron', seat: 3, tile: 43 })
     expect(winChoice(offered, PLAYER)).toBeNull()
+    expect(forcedAction(botHoutei, offered, PLAYER)).toBe(offered[0])
+    // And the fold accepts the settled ron into agari — the hand does not rest.
+    const won = foldRecord({ seed: 147508, actions: [...prefix, offered[0]] })
+    expect(won.phase).toBe('agari')
+    expect(won.win?.winner).toBe(3)
   })
 
-  it('still forces bot tsumogiri past a bot tsumo offer — placeholder bots never win', () => {
+  it("folds a bot's window ron immediately — no player offer, no wait", () => {
+    const offered = legalActions(botRonWindow)
+    expect(offered).toEqual([
+      { type: 'draw', seat: 1 },
+      { type: 'ron', seat: 3, tile: 72 },
+    ])
+    expect(forcedAction(botRonWindow, offered, PLAYER)).toBe(offered[1])
+  })
+
+  it('takes a bot tsumo through the policy — the placeholder never-win rule is gone', () => {
     // Seed 3951 turn 35: seat 3 draws its 4s tsumo point (core's frozen anchor).
-    // The offering ends [.., tsumo seat 3], and the reverse discard scan must step
-    // over the win exactly as it steps over kans: the drawn tile still goes out.
+    // The placeholder tsumogiried past this; discardPolicy's first arm takes it.
     const state = foldRecord({
       seed: 3951,
       actions: [...tsumogiriTurns(dealtLive(3951), 35), { type: 'draw', seat: 3 }],
     })
     const offered = legalActions(state)
-    expect(offered.some((a) => a.type === 'tsumo' && a.seat === 3)).toBe(true)
-    const forced = forcedAction(offered, PLAYER)
-    if (forced?.type !== 'discard') throw new Error('a bot mid-turn forces a discard')
-    expect(forced.tile).toBe(state.drawn)
+    const tsumo = offered.find((a) => a.type === 'tsumo' && a.seat === 3)
+    expect(tsumo).toBeDefined()
+    const forced = forcedAction(state, offered, PLAYER)
+    expect(forced).toBe(tsumo)
+    // Oracle: identical to the policy's own answer over seat 3's view.
+    expect(forced).toBe(discardPolicy(seatView(state, 3), offered))
   })
 })
 
 describe('full hand driven through the seam', () => {
-  it('plays deal → ryuukyoku, the player passing every claim, byte-identical to unclaimed play', () => {
+  it('plays deal → ryuukyoku with policy bots: S/W/N draw, discard, and call on their own', () => {
     const actions: HandAction[] = []
     let state = foldRecord({ seed: SEED, actions })
-    let passes = 0
-    // 140 actions end the hand; the guard only bounds a regression, it never trips.
-    for (let guard = 0; guard < 200; guard++) {
+    let declines = 0
+    let botTedashi = 0
+    // 144 actions end the hand; the guard only bounds a regression, it never trips.
+    for (let guard = 0; guard < 300; guard++) {
       const offered = legalActions(state)
       if (offered.length === 0) break
-      const forced = forcedAction(offered, PLAYER)
+      const forced = forcedAction(state, offered, PLAYER)
       let next: HandAction
       if (forced !== null) {
-        // Bot discards are pure tsumogiri: the fold's drawn tile, nothing from hand.
-        if (forced.type === 'discard') expect(forced.tile).toBe(state.drawn)
-        next = forced
-      } else {
-        const pass = passClaim(offered, PLAYER)
-        if (pass !== null) {
-          // The player's claim prompt — this walk always declines, so the trajectory
-          // is exactly the unclaimed one: the pass IS the head draw the old loop took.
-          passes++
-          expect(pass).toBe(offered[0])
-          next = pass
-        } else {
-          // The player always taps his first offered tile — a tedashi-shaped choice,
-          // exercising hand discards rather than mirroring the bots' tsumogiri.
-          const first = offered[0]
-          if (first.type !== 'discard') throw new Error('an unforced offering is a discard choice')
-          const tapped = tapDiscard(offered, PLAYER, first.tile)
-          expect(tapped).toBe(first)
-          next = tapped!
+        // The bots' hand discards are the tsumogiri placeholder's disproof.
+        if (forced.type === 'discard' && forced.seat !== PLAYER && forced.tile !== state.drawn) {
+          botTedashi++
         }
+        next = forced
+      } else if (
+        claimChoices(offered, PLAYER).length > 0 ||
+        winChoice(offered, PLAYER) !== null
+      ) {
+        // The player's prompt — this walk always declines; the decline may still
+        // fold a bot's accepted claim (that is the point of the arbitration).
+        declines++
+        const settled = settleWindow(state, offered, PLAYER, null)
+        if (settled === null) throw new Error('a mid-hand decline always has a fold')
+        next = settled
+      } else {
+        // The player's tap: tsumogiri the drawn tile (keeps his 13 tiles frozen).
+        const tapped = tapDiscard(offered, PLAYER, state.drawn!)
+        if (tapped === null) throw new Error('the walk has no driver — a wait with no tap')
+        next = tapped
       }
       // Identity containment: the appended action IS an element of this fold's offering.
       expect(offered).toContain(next)
@@ -657,56 +761,95 @@ describe('full hand driven through the seam', () => {
       state = foldRecord({ seed: SEED, actions }) // never throws — every append was offered
     }
     expect(state.phase).toBe('ryuukyoku')
-    expect(actions).toHaveLength(140) // 70 draw/discard pairs — the whole live wall
+    expect(state.win).toBeNull()
     expect(state.live).toHaveLength(0)
     expect(legalActions(state)).toEqual([])
-    // Seed 1 opens exactly two East-claimable windows on this trajectory (both chis
-    // on North 7s/5m discards — scratchpad scan, actions #96 and #104): the prompt
-    // fired and was declined twice, and nothing else moved.
-    expect(passes).toBe(2)
-    // 70 discards across the ponds; East and South act on the two extra turns.
-    expect(state.ponds.map((pond) => pond.length)).toEqual([18, 18, 17, 17])
+    // Frozen walk facts (mined): 70 draw/discard pairs plus South's two chis and
+    // their claim discards; the player's prompt fired and was declined 3 times.
+    expect(actions).toHaveLength(144)
+    expect(declines).toBe(3)
+    // S/W/N act on their own: South called twice — both chis claim EAST's fresh
+    // discards, folded by the loop with no player input...
+    expect(state.melds).toEqual([
+      [],
+      [
+        { type: 'chi', claimed: 20, from: 0, own: [26, 28] },
+        { type: 'chi', claimed: 18, from: 0, own: [13, 21] },
+      ],
+      [],
+      [],
+    ])
+    // ...and the bots discard by policy, not tsumogiri: hand discards happened.
+    expect(botTedashi).toBeGreaterThan(0)
+    expect(state.ponds.map((pond) => pond.length)).toEqual([18, 18, 18, 18])
   })
 })
 
 describe('a claim driven through the seam', () => {
-  it('takes the seed-3 chi: call → forced claim discard choice → bots resume', () => {
-    const actions: HandAction[] = [...racePrefix3]
-    const atWindow = legalActions(foldRecord({ seed: 3, actions }))
-    // The prompt is up: the loop waits, the choices are East's two variants.
-    expect(forcedAction(atWindow, PLAYER)).toBeNull()
-    const chi = tapClaim(atWindow, PLAYER, EAST_CHI_A)
-    expect(chi).toBe(claimChoices(atWindow, PLAYER)[0])
-    actions.push(chi!)
+  it("folds the player's pon at a pure player window: call → claim discard → bots resume (seed 15)", () => {
+    const actions: HandAction[] = [...tsumogiriTurns(dealt15.live, 8)]
+    const atWindow = foldRecord({ seed: 15, actions })
+    const offered = legalActions(atWindow)
+    // The prompt is up, and no bot holds an offer (mined): the settle is the tap's.
+    expect(forcedAction(atWindow, offered, PLAYER)).toBeNull()
+    const pon = tapClaim(offered, PLAYER, { type: 'pon', uses: [44, 47] })
+    expect(pon).toBe(claimChoices(offered, PLAYER)[0])
+    const settled = settleWindow(atWindow, offered, PLAYER, pon)
+    expect(settled).toBe(pon)
+    actions.push(settled!)
 
     // The fold accepts the call: the meld is East's, claimed from North's pond mark.
-    const claimed = foldRecord({ seed: 3, actions })
+    const claimed = foldRecord({ seed: 15, actions })
     expect(claimed.melds[PLAYER]).toEqual([
-      { type: 'chi', claimed: 42, from: 3, own: [37, 47] },
+      { type: 'pon', claimed: 45, from: 3, own: [44, 47] },
     ])
-    // The claim discard is owed: not forced, not passable — the player's tap only.
+    // The claim discard is owed: not forced, nothing settles — the player's tap only.
     const mustDiscard = legalActions(claimed)
-    expect(forcedAction(mustDiscard, PLAYER)).toBeNull()
-    expect(passClaim(mustDiscard, PLAYER)).toBeNull()
+    expect(forcedAction(claimed, mustDiscard, PLAYER)).toBeNull()
+    expect(settleWindow(claimed, mustDiscard, PLAYER, null)).toBeNull()
     const out = tapDiscard(mustDiscard, PLAYER, claimed.hands[PLAYER][0])
     expect(out).toBe(mustDiscard[0])
     actions.push(out!)
 
     // Play resumes without player input: the next seat's draw is forced again.
-    const resumed = legalActions(foldRecord({ seed: 3, actions }))
-    const forced = forcedAction(resumed, PLAYER)
+    const resumed = foldRecord({ seed: 15, actions })
+    const offeredResumed = legalActions(resumed)
+    const forced = forcedAction(resumed, offeredResumed, PLAYER)
     expect(forced).not.toBeNull()
-    expect(resumed).toContain(forced)
+    expect(offeredResumed).toContain(forced)
+  })
+
+  it("loses the seed-3 race to South's pon: the tapped chi settles to the bot's claim", () => {
+    const actions: HandAction[] = [...racePrefix3]
+    const atWindow = foldRecord({ seed: 3, actions })
+    const offered = legalActions(atWindow)
+    expect(forcedAction(atWindow, offered, PLAYER)).toBeNull() // the prompt is up
+    const chi = tapClaim(offered, PLAYER, EAST_CHI_A)!
+    const settled = settleWindow(atWindow, offered, PLAYER, chi)
+    // South's pon strictly cuts its shanten and keeps a yaku anchor (mined), and a
+    // pon is offered before any chi: the player's call loses the window.
+    expect(settled).toEqual({ type: 'pon', seat: 1, tile: 42, uses: SOUTH_PON_3.uses })
+    actions.push(settled!)
+
+    const claimed = foldRecord({ seed: 3, actions })
+    expect(claimed.melds[1]).toEqual([{ type: 'pon', claimed: 42, from: 3, own: [43, 41] }])
+    expect(claimed.melds[PLAYER]).toEqual([])
+    // South owes the claim discard; the loop drives it by policy without any tap.
+    const mustDiscard = legalActions(claimed)
+    const forced = forcedAction(claimed, mustDiscard, PLAYER)
+    expect(forced).toBe(discardPolicy(seatView(claimed, 1), mustDiscard))
   })
 })
 
 describe('wins driven through the seam', () => {
   /**
-   * The eager-winner walk: pass every claim, tsumogiri every player turn (the tap
-   * on the DRAWN tile — a tedashi would mutate the 13-tile hand and break the
-   * mined first-event geometry), and take the first win offered. Returns the
-   * actions it appended; every append is asserted to be an element of its fold's
-   * offering (the identity containment that makes the walk a seam test).
+   * The eager-winner walk under policy bots: take the player's win when offered
+   * (through settleWindow — a bot's atamahane-earlier ron could outrank it),
+   * otherwise let forcedAction drive, decline every player claim prompt, and
+   * tsumogiri every player turn. Returns the actions it appended; every append is
+   * asserted to be an element of its fold's offering (the identity containment
+   * that makes the walk a seam test). The mined trajectories differ from the old
+   * all-tsumogiri ones — the bots now shape every hand they sit in.
    */
   function playToWin(seed: number, guardLimit: number): HandAction[] {
     const actions: HandAction[] = []
@@ -715,11 +858,16 @@ describe('wins driven through the seam', () => {
       const offered = legalActions(state)
       if (offered.length === 0) break
       const win = winChoice(offered, PLAYER)
-      const next =
-        win ??
-        forcedAction(offered, PLAYER) ??
-        passClaim(offered, PLAYER) ??
-        tapDiscard(offered, PLAYER, state.drawn!)
+      let next: HandAction | null
+      if (win !== null) {
+        next = settleWindow(state, offered, PLAYER, win)
+      } else {
+        next = forcedAction(state, offered, PLAYER)
+        if (next === null && claimChoices(offered, PLAYER).length > 0) {
+          next = settleWindow(state, offered, PLAYER, null)
+        }
+        if (next === null) next = tapDiscard(offered, PLAYER, state.drawn!)
+      }
       if (next === null) throw new Error('the walk has no driver — a wait with no tap')
       expect(offered).toContain(next)
       actions.push(next)
@@ -727,33 +875,28 @@ describe('wins driven through the seam', () => {
     return actions
   }
 
-  it('plays deal → tsumo: the prompt moment is taken and the hand ends won', () => {
-    const actions = playToWin(TSUMO_SEED, 200)
-    // 32 tsumogiri turns, the 33rd draw, the tsumo: nothing else moved.
-    expect(actions).toHaveLength(66)
-    expect(actions[65]).toEqual({ type: 'tsumo', seat: PLAYER })
+  it('plays deal → the player rons: the mined 6p/9p wait now arrives as a bot discard', () => {
+    // Seed 542630 was the all-tsumogiri TSUMO geometry (turn 32, live[32]); with
+    // the bots discarding by policy the wait surfaces much earlier as North's
+    // discard, and the win folds as a ron (frozen walk facts, re-mined).
+    const actions = playToWin(TSUMO_SEED, 300)
+    expect(actions).toHaveLength(41)
     const won = foldRecord({ seed: TSUMO_SEED, actions })
     expect(won.phase).toBe('agari')
-    expect(won.win).toEqual({
-      by: 'tsumo',
-      winner: PLAYER,
-      tile: 69,
-      yaku: ['menzen-tsumo', 'pinfu'],
-    })
+    expect(won.win).toEqual({ by: 'ron', winner: PLAYER, from: 3, tile: 71, yaku: ['pinfu'] })
     // Quiescence through the seam: the won hand offers nothing and drives nothing.
     const offered = legalActions(won)
     expect(offered).toEqual([])
-    expect(forcedAction(offered, PLAYER)).toBeNull()
-    expect(passClaim(offered, PLAYER)).toBeNull()
+    expect(forcedAction(won, offered, PLAYER)).toBeNull()
+    expect(settleWindow(won, offered, PLAYER, null)).toBeNull()
     expect(winChoice(offered, PLAYER)).toBeNull()
   })
 
-  it('plays deal → ron: the window win is taken over the coexisting pon and chis', () => {
-    const actions = playToWin(SHANPON_SEED, 50)
-    // Four tsumogiri turns, then the ron on North's fresh 8m — the win outranked
-    // the pass and the claims in the walk exactly as it leads the offered order.
-    expect(actions).toHaveLength(9)
-    expect(actions[8]).toEqual({ type: 'ron', seat: PLAYER, tile: 31 })
+  it('plays deal → ron over coexisting claims: the shanpon geometry survives the policy bots', () => {
+    const actions = playToWin(SHANPON_SEED, 300)
+    // The same winning tile and yaku as the all-tsumogiri geometry, on a longer
+    // mined trajectory — the bots reshaped the road, not the destination.
+    expect(actions).toHaveLength(31)
     const won = foldRecord({ seed: SHANPON_SEED, actions })
     expect(won.phase).toBe('agari')
     expect(won.win).toEqual({
@@ -766,12 +909,45 @@ describe('wins driven through the seam', () => {
     expect(legalActions(won)).toEqual([])
   })
 
-  it('plays deal → ryuukyoku → houtei ron: the carve-out win folds out of the ended hand', () => {
-    const actions = playToWin(HOUTEI_SEED, 200)
-    // The full 70-turn wall, then the houtei ron on the final discard.
-    expect(actions).toHaveLength(141)
-    expect(actions[140]).toEqual({ type: 'ron', seat: PLAYER, tile: 21 })
+  it('plays deal → the player tsumos: the ron-only geometry becomes a live tsumo', () => {
+    // Seed 362857 was the ron-ONLY window anchor; under policy bots the 5m never
+    // leaves a bot's hand at that turn — East draws it himself instead (re-mined).
+    const actions = playToWin(RON_ONLY_SEED, 300)
+    expect(actions).toHaveLength(56)
+    const won = foldRecord({ seed: RON_ONLY_SEED, actions })
+    expect(won.phase).toBe('agari')
+    expect(won.win).toEqual({
+      by: 'tsumo',
+      winner: PLAYER,
+      tile: 19,
+      yaku: ['menzen-tsumo', 'yakuhai-chun'],
+    })
+  })
+
+  it('plays deal → a BOT rons the player: the bots win through the same driver', () => {
+    // Seed 1038928 was the houtei walk; under policy bots West completes ittsuu
+    // off the player's tsumogiri long before the wall empties (re-mined). The
+    // bots' wins end hands now — the placeholder's never-win rule is dead.
+    const actions = playToWin(HOUTEI_SEED, 300)
+    expect(actions).toHaveLength(73)
     const won = foldRecord({ seed: HOUTEI_SEED, actions })
+    expect(won.phase).toBe('agari')
+    expect(won.win).toEqual({ by: 'ron', winner: 2, from: PLAYER, tile: 17, yaku: ['ittsuu'] })
+    expect(legalActions(won)).toEqual([])
+  })
+
+  it('folds the houtei ron out of the ended hand — the carve-out pinned at state level', () => {
+    // The fixed all-tsumogiri prefix still reaches the houtei state (folds are
+    // driver-independent); only the WALK no longer gets there. The settle takes
+    // the rons-only offering's win and the fold accepts it into agari.
+    const offered = legalActions(houteiEnd)
+    const ron = winChoice(offered, PLAYER)!
+    const settled = settleWindow(houteiEnd, offered, PLAYER, ron)
+    expect(settled).toBe(ron)
+    const won = foldRecord({
+      seed: HOUTEI_SEED,
+      actions: [...tsumogiriTurns(dealtHoutei.live, 70), settled!],
+    })
     expect(won.phase).toBe('agari')
     expect(won.win).toEqual({
       by: 'ron',
@@ -780,6 +956,5 @@ describe('wins driven through the seam', () => {
       tile: 21,
       yaku: ['chiitoitsu', 'houtei'],
     })
-    expect(legalActions(won)).toEqual([])
   })
 })

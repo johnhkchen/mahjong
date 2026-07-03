@@ -1,16 +1,29 @@
-// App-side wiring over core's offered set — the seam between input (taps, the bot
-// placeholder, the auto-draw) and the authoritative record. Every function here takes
-// legalActions output and returns an ELEMENT of it or null; nothing in this module
-// computes legality, reads hands, or counts the wall — the app builds actions via
-// legalActions, never locally (the ticket's contract, tested in drive.test.ts). The
-// tsumogiri chooser is the deliberate bot placeholder: it stands exactly where a real
-// core bot (table state → action, a stateless peripheral) will be swapped in later —
-// and bot seats auto-pass every claim window and every win offer for the same reason
-// (placeholder bots never call, never win). The PLAYER's claims and wins are the
-// exception: forcedAction waits on them, and tapClaim/passClaim/winChoice select the
-// call, the decline, or the win from the same offered set.
+// App-side wiring over core's offered set — the seam between input (taps, the
+// policy bots, the auto-draw) and the authoritative record. Every function here
+// returns an ELEMENT of legalActions output or null; nothing in this module computes
+// legality, reads the wall, or constructs an action — the app builds actions via
+// legalActions, never locally (the original seam contract, tested in drive.test.ts).
+// The tsumogiri placeholder and the bot auto-pass are gone (T-006-03-03): the three
+// non-PLAYER seats decide through core's policy pair — discardPolicy at their own
+// turns, callPolicy at claim windows and houtei. The DRIVER holds the state and each
+// seat holds a VIEW (seatview.ts's doctrine): forcedAction and settleWindow take the
+// folded TableState solely to project seatView(state, seat) for the policies, which
+// are themselves pure selectors over `offered` — legality still comes from nowhere
+// but the list. The PLAYER's claims and wins remain the exception: forcedAction
+// waits on them, tapClaim/winChoice select the call or the win, and the player's
+// answer (or his decline) then joins the bots' in settleWindow — one arbitration
+// for every seat, offered position as the rules' precedence.
 
-import { kindOf, type HandAction, type Seat, type TileId } from '../core'
+import {
+  callPolicy,
+  discardPolicy,
+  kindOf,
+  seatView,
+  type HandAction,
+  type Seat,
+  type TableState,
+  type TileId,
+} from '../core'
 
 /** The human's seat — East, the dealer. Table.svelte presents the same fact. */
 export const PLAYER: Seat = 0
@@ -19,7 +32,8 @@ export const PLAYER: Seat = 0
  * The claim-window call forms — what a seat may take from another seat's fresh
  * discard. Ankan/shouminkan are deliberately NOT claims: they are the turn seat's
  * own-turn choices, already handled by forcedAction's player-discard null (the
- * player's kan UI is future work; a bot's kan offers lose to tsumogiri below).
+ * player's kan UI is future work; a bot's own-turn kan offers pass through
+ * discardPolicy unchosen — policy.ts's frozen arms).
  */
 type ClaimAction = Extract<HandAction, { type: 'chi' | 'pon' | 'daiminkan' }>
 
@@ -45,8 +59,8 @@ export interface ClaimChoice {
  * then daiminkans, then chis, shapes low-rank ascending — elements of `offered`
  * itself, never rebuilt. Empty at everything that is not an open claim window with
  * player offers. The one predicate three consumers share: forcedAction's wait
- * condition, passClaim's guard, and the claim prompt's render list (T-004-02-02) —
- * the loop waits exactly when the prompt shows.
+ * condition, settleWindow's declinable guard, and the claim prompt's render list
+ * (T-004-02-02) — the loop waits exactly when the prompt shows.
  */
 export function claimChoices(offered: readonly HandAction[], player: Seat): HandAction[] {
   return offered.filter((action) => isClaim(action) && action.seat === player)
@@ -107,22 +121,78 @@ export function tapClaim(
 }
 
 /**
- * The action a pass on the claim prompt builds: the draw at the head — the default
- * continuation whose fold lets the window go stale (there is no pass action in the
- * vocabulary; declining IS taking the next draw, which may be the player's own).
- * Null whenever the player holds nothing to decline — no claim offer and no win
- * offer: complementary to forcedAction by construction, so exactly one driver
- * applies at every state — passClaim is non-null precisely where forcedAction newly
- * waits AND a draw exists to decline into. Of the win moments only the window ron
- * ever reaches the head check: a tsumo point heads with a discard (declining a
- * tsumo IS discarding — the tap surface is already live) and a houtei offering
- * heads with the ron itself (the hand is provisionally over; there is no action to
- * decline into, so the decline is the prompt owner's presentation fact).
+ * The seats other than `player` holding a ron or claim offer, deduped, in
+ * first-offer order — the seats settleWindow consults and the presence test for
+ * forcedAction's window arm. Tsumo and own-turn kan offers are deliberately not
+ * scanned: they are own-turn decisions (discardPolicy's), never window answers.
  */
-export function passClaim(offered: readonly HandAction[], player: Seat): HandAction | null {
+function botSeatsHoldingOffers(offered: readonly HandAction[], player: Seat): Seat[] {
+  const seats: Seat[] = []
+  for (const action of offered) {
+    if (
+      (action.type === 'ron' || isClaim(action)) &&
+      action.seat !== player &&
+      !seats.includes(action.seat)
+    ) {
+      seats.push(action.seat)
+    }
+  }
+  return seats
+}
+
+/**
+ * The window settlement — ONE arbitration for every seat, at claim windows and
+ * houtei (and, degenerately, anywhere the app resolves a player answer: a tsumo
+ * point settles to the tsumo itself, no bot holding offers there). `chosen` is the
+ * player's answer — a tapClaim/winChoice element, or null for the decline — and
+ * the bots' answers come from callPolicy over per-seat views, consulted once per
+ * seat holding a ron or claim offer. A callPolicy draw answer means THAT SEAT
+ * DECLINED (T-006-03-02's contract), never "fold the draw now" — another seat may
+ * still take the window. The earliest non-draw answer in offered order wins:
+ * offered position IS the rules' precedence (legal.ts freezes rons in atamahane
+ * rotation before pons before daiminkans before chis), so a bot's ron outranks the
+ * player's pon and a bot's pon outranks his chi — a tap can lose the window,
+ * exactly as at a real table. When every seat declines, the head draw is returned
+ * when the state held anything declinable (folding it lets the window go stale —
+ * there is no pass action in the vocabulary), and null otherwise: nothing to fold.
+ * The null arms are the old pass geometry verbatim — a windowless state (nothing
+ * to decline), a tsumo point reached defensively (its decline IS a discard tap;
+ * the head is not a draw), and the declined player-only houtei (rons-only
+ * offering; the decline is the prompt owner's presentation fact — the dismissal).
+ * A `chosen` that is not an element of `offered` is ignored (indexOf < 0), so
+ * every non-null result is an element of `offered` by construction.
+ */
+export function settleWindow(
+  state: TableState,
+  offered: readonly HandAction[],
+  player: Seat,
+  chosen: HandAction | null,
+): HandAction | null {
+  let best: HandAction | null = null
+  let bestAt = Infinity
+  if (chosen !== null) {
+    const at = offered.indexOf(chosen)
+    if (at >= 0) {
+      best = chosen
+      bestAt = at
+    }
+  }
+  const bots = botSeatsHoldingOffers(offered, player)
+  for (const seat of bots) {
+    const answer = callPolicy(seatView(state, seat), offered)
+    if (answer.type === 'draw') continue
+    const at = offered.indexOf(answer)
+    if (at < bestAt) {
+      best = answer
+      bestAt = at
+    }
+  }
+  if (best !== null) return best
   const head = offered[0]
   if (head === undefined || head.type !== 'draw') return null
-  return claimChoices(offered, player).length > 0 || winChoice(offered, player) !== null
+  return bots.length > 0 ||
+    claimChoices(offered, player).length > 0 ||
+    winChoice(offered, player) !== null
     ? head
     : null
 }
@@ -138,11 +208,12 @@ export function passClaim(offered: readonly HandAction[], player: Seat): HandAct
  * yakuless completions are never offered (core's gates, legal.ts), so they can
  * never be appended through this seam — THE FURITEN DIVERGENCE consumed: the fold
  * would accept a furiten ron, but a driver that only appends offered elements
- * cannot build one. `find` order note for the future bot recorder: simultaneous
- * rons are offered in rotation order from the discarder, which is atamahane
- * (head-bump) order — a recorder breaking a multi-ron tie takes the first offered
- * ron. Today only the player's own offer is ever selected (placeholder bots never
- * win), and a seat holds at most one, so the scan only ever skips other seats'.
+ * cannot build one. This selector is the PLAYER's lens only: the bots' wins go
+ * through callPolicy (settleWindow for rons, discardPolicy for tsumo), and the
+ * atamahane (head-bump) arbitration between simultaneous rons is settleWindow's
+ * offered-index rule — rons are offered in rotation order from the discarder, so
+ * the earliest offered ron is the head-bump winner. A seat holds at most one win
+ * offer, so this scan only ever skips other seats'.
  */
 export function winChoice(offered: readonly HandAction[], player: Seat): HandAction | null {
   return (
@@ -173,36 +244,40 @@ export function tapDiscard(
 
 /**
  * The action that happens without player input, or null when the game waits on the
- * player — his discard choice, his call/pass decision, his win — or has ended (empty
+ * player — his discard choice, his window answer, his win — or has ended (empty
  * offering, the loop's halt condition):
  *
  * - a state holding a claim OR WIN offer for the PLAYER waits: null before anything
  *   else, because the head can be the player's OWN draw (North discards, East may
  *   chi — or RON — the turn advanced to East) and taking it would silently pass the
  *   player's claim or win. "A draw is never a choice" is false exactly here: this
- *   draw is the pass, and only tapClaim/passClaim/the win tap may make that call
- *   (the seed-3 and seed-362857 geometries in drive.test.ts). The guard also owns
- *   the player's houtei: a ryuukyoku offering holding his ron waits by intent, not
- *   by the fallthrough coincidence of the seat check below;
- * - otherwise a draw at the head is forced, the player's included — bot-only claim
- *   and win offers behind it are never taken: forcing the draw lets the discard go
- *   stale, i.e. placeholder bots auto-pass every call until a real bot ticket;
- * - a non-player discard obligation forces tsumogiri: the LAST offered DISCARD, which
- *   is the drawn tile by legalActions' frozen hand-order-then-drawn-last contract.
- *   The reverse scan (not offered[offered.length - 1]) matters because tsumo and kan
- *   offers follow the discards — a bot whose draw completes its hand or fills a kan
- *   must still tsumogiri, never silently win or kan. A real bot later replaces
- *   exactly this arm;
- * - a bot-only houtei offering (ryuukyoku, rons only, none the player's) falls
- *   through everything — no draw, no discard — to null: the halt, i.e. the bots
- *   pass their houtei rons and the hand rests at ryuukyoku.
+ *   draw is the pass, and only the prompt's taps — through settleWindow — may make
+ *   that call (the seed-3 and seed-362857 geometries in drive.test.ts). The guard
+ *   also owns the player's houtei: a ryuukyoku offering holding his ron waits by
+ *   intent, not by the fallthrough coincidence of the seat check below;
+ * - a state holding ron/claim offers for BOT seats only settles immediately:
+ *   settleWindow with no player answer — the earliest accepted bot answer in
+ *   offered order, else the head draw (every consulted seat declined; the window
+ *   goes stale — the decline doctrine), else null. This arm replaces the
+ *   placeholder auto-pass, and it is where the bots call, ron, and take their
+ *   houtei rons (a bot never declines an offered ron, so a bot-only houtei always
+ *   settles to its ron rather than resting the hand);
+ * - otherwise a draw at the head is forced, the player's included — a draw is
+ *   never a choice, for any seat;
+ * - a player discard obligation waits — that is the tap's choice (the tsumo point
+ *   included: the win button and the discard surface are both live);
+ * - a non-player discard obligation routes to discardPolicy over the bot's own
+ *   view: the offered tsumo when the draw won the hand, else the shanten-minimizing
+ *   discard by the frozen tie-break. This arm replaces the tsumogiri placeholder;
+ *   own-turn kan offers still pass through unchosen (policy.ts's frozen arms).
  *
- * Classifying by offered[0] is sound past the claim/win guard because the head is
+ * Classifying by offered[0] is sound past the two window guards because the head is
  * the frozen order's anchor: the draw at pre-draw states, the first hand discard
- * otherwise, always the turn seat — except a ryuukyoku offering, which heads with a
- * ron and reaches only the null arms.
+ * otherwise, always the turn seat — and every ryuukyoku offering (rons only) was
+ * consumed by the guards above.
  */
 export function forcedAction(
+  state: TableState,
   offered: readonly HandAction[],
   player: Seat,
 ): HandAction | null {
@@ -211,11 +286,10 @@ export function forcedAction(
   if (claimChoices(offered, player).length > 0 || winChoice(offered, player) !== null) {
     return null
   }
+  if (botSeatsHoldingOffers(offered, player).length > 0) {
+    return settleWindow(state, offered, player, null)
+  }
   if (head.type === 'draw') return head
   if (head.seat === player) return null
-  for (let i = offered.length - 1; i >= 0; i--) {
-    const action = offered[i]
-    if (action.type === 'discard') return action
-  }
-  return null
+  return discardPolicy(seatView(state, head.seat), offered)
 }
