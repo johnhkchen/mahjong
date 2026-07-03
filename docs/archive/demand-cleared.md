@@ -33,3 +33,21 @@ to keep it lean. One line per epic: what it delivered. Full cards live in
   agreement suite; six-zone conservation + kan-aware termination + illegal-claim mutation matrix
   (214 tests green). View: call/pass prompt with chi-variant choice, melds beside hands. Rinshan
   draws and kan-dora flips are derived, never logged. 6/6 tickets done.
+- **E-005 agari-win-detection** ("Agari + win detection", Tier 1) — the hand became winnable:
+  agari decomposition vs a brute-force oracle, waits with exhaustion convention, the closed
+  yaku catalog (names only, per-yaku positive/negative), yakuman + one-yaku gate, tsumo/ron
+  through the claim seam with discard furiten, win prompt + hand-end screen naming winner/tile/
+  yaku. 8/8 tickets done.
+- **E-006 competent-bot-table** ("One competent bot table", Tier 1 — **Tier 1 closed**) —
+  SeatView fair-play projection (provably insensitive to hidden state), the shanten crown
+  (standard + chiitoi/kokushi min-combinator vs brute-force reference, 0 ⟺ tenpai), pure
+  deterministic policy (shanten-minimizing discards, yaku-aware calls, always takes wins),
+  S/W/N wired through the drive seam, AI-vs-AI determinism/termination harness. 9/9 tickets
+  done. Sweep note: T-006-02-02's session left its combinator work uncommitted — HEAD was red
+  without it; recovered at sweep (done means committed).
+- **E-007 taiwanese-parlor-feel** (frontend UI polish, owner playtest demand) — original
+  Taiwan-style inline-SVG tile set (chassis + honors/backs, pin/sou pips, kanji man, 8
+  decorative flowers with a no-flower-in-deal test), ~300KB size ceiling in the single-file
+  gate (actual: 83KB), portrait one-thumb layout with 44px targets, CSS-only draw/discard/
+  claim/hand-end motion honoring prefers-reduced-motion, display-sort with tap→exact-TileId
+  guard. 9/9 tickets done (577 tests green at sweep).
