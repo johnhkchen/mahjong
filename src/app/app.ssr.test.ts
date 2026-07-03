@@ -8,7 +8,7 @@
 import { render } from 'svelte/server'
 import { describe, expect, it } from 'vitest'
 import { foldRecord, kindOf, legalActions, type HandAction, type TileId } from '../core'
-import { PLAYER, promptChoices } from './drive'
+import { PLAYER, promptChoices, winChoice } from './drive'
 import App from './App.svelte'
 import ClaimPrompt from './ClaimPrompt.svelte'
 import Table from './Table.svelte'
@@ -196,6 +196,71 @@ describe('claim prompt view (SSR)', () => {
 
   it('shows no prompt at the freshly dealt boot — nothing is claimable', () => {
     expect(render(App).body).not.toContain('call or pass')
+  })
+})
+
+// The win-prompt moments, props DERIVED from live offers at the frozen drive.test.ts
+// win anchors (mined geometries documented there): seed 542630 — East's turn-32 draw
+// 69 (9p) is its tsumo point; seed 887141 — North's turn-3 discard 31 (8m) opens a
+// window where East holds the ron AND a pon AND chis; seed 1038928 — the final
+// discard 21 (6m) is East's houtei chiitoitsu, a ryuukyoku offering with no draw.
+describe('win prompt view (SSR)', () => {
+  it('renders the tsumo button alone at the tsumo point — no pass, declining IS discarding', () => {
+    const dealtT = foldRecord({ seed: 542630, actions: [] })
+    const point = foldRecord({
+      seed: 542630,
+      actions: [...tsumogiriTurns(dealtT.live, 32), { type: 'draw', seat: 0 }],
+    })
+    const offered = legalActions(point)
+    const { body } = render(ClaimPrompt, {
+      props: {
+        claimed: point.claimable?.tile ?? null,
+        choices: promptChoices(offered, PLAYER),
+        win: winChoice(offered, PLAYER),
+        canPass: false,
+      },
+    })
+    expect(body).toContain('aria-label="tsumo"')
+    expect(body).not.toContain('aria-label="pass"')
+    expect(body).not.toContain('call on') // no window tile — the button IS the moment
+  })
+
+  it('renders the ron beside the coexisting calls at the shanpon window, win first', () => {
+    const dealtS = foldRecord({ seed: 887141, actions: [] })
+    const window = foldRecord({ seed: 887141, actions: tsumogiriTurns(dealtS.live, 4) })
+    const offered = legalActions(window)
+    const { body } = render(ClaimPrompt, {
+      props: {
+        claimed: window.claimable!.tile,
+        choices: promptChoices(offered, PLAYER),
+        win: winChoice(offered, PLAYER),
+        onpass: () => {},
+      },
+    })
+    expect(body).toContain('aria-label="ron 8m"')
+    expect(body).toContain('aria-label="pon 8m with 8m 8m"')
+    expect(body).toContain('aria-label="pass"')
+    // Document order is the offered order: the win leads the calls.
+    expect(body.indexOf('aria-label="ron 8m"')).toBeLessThan(
+      body.indexOf('aria-label="pon 8m'),
+    )
+  })
+
+  it('renders the houtei ron with its winning tile and the pass — the dismissal', () => {
+    const dealtH = foldRecord({ seed: 1038928, actions: [] })
+    const end = foldRecord({ seed: 1038928, actions: tsumogiriTurns(dealtH.live, 70) })
+    const offered = legalActions(end)
+    const { body } = render(ClaimPrompt, {
+      props: {
+        claimed: end.claimable?.tile ?? null,
+        choices: promptChoices(offered, PLAYER),
+        win: winChoice(offered, PLAYER),
+      },
+    })
+    expect(end.phase).toBe('ryuukyoku')
+    expect(body).toContain('aria-label="ron 6m"')
+    expect(body).toContain('aria-label="pass"')
+    expect(body).not.toContain('call on')
   })
 })
 
