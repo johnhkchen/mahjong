@@ -1,8 +1,8 @@
 // The chassis contract: Tile renders through the real Svelte SSR compiler, and the
-// assertions pin exactly what the rest of the app (and T-007-01-02/-03, which redraw
-// the interim numbered faces on this chassis) may rely on — the one hidden kind token
-// per face chip, the aria-hidden SVG art, the honor faces, and the tokenless back.
-// Content only, never classes or geometry, so the art stays free to be redrawn.
+// assertions pin exactly what the rest of the app may rely on — the one hidden kind
+// token per face chip, the aria-hidden SVG art, the honor/man/pip faces, and the
+// tokenless back. Content only, never classes or geometry (pip multiplicity counts
+// semantic elements, not coordinates), so the art stays free to be redrawn.
 
 import { render } from 'svelte/server'
 import { describe, expect, it } from 'vitest'
@@ -126,6 +126,51 @@ describe('man faces', () => {
     for (const kind of MAN_RANK_GLYPHS.keys()) {
       expect(chipOf(kind), kind).not.toMatch(/>[1-9]</)
     }
+  })
+})
+
+/** Occurrences of a literal needle — the same idiom as the `<svg` count above. */
+function countOf(body: string, needle: string): number {
+  return body.split(needle).length - 1
+}
+
+const RANKS = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const
+
+describe('pip faces — pin coins and sou bamboo', () => {
+  it('draws exactly N coins on Np', () => {
+    // Each coin is exactly one <circle>; nothing else on a pin face is a circle.
+    for (const r of RANKS) {
+      expect(countOf(chipOf(`${r}p` as TileKind), '<circle'), `${r}p`).toBe(r)
+    }
+  })
+
+  it('draws exactly N sticks on Ns, over the two chassis rects', () => {
+    // Chassis = under-body + face (2 rects); each bamboo stick is one more.
+    // 1s is the bird, asserted separately.
+    for (const r of RANKS) {
+      if (r === 1) continue
+      expect(countOf(chipOf(`${r}s` as TileKind), '<rect'), `${r}s`).toBe(2 + r)
+    }
+  })
+
+  it('draws the bird on 1s and nowhere else', () => {
+    // The bird's body is the only <ellipse> in the entire set.
+    for (const kind of TILE_KINDS) {
+      expect(countOf(chipOf(kind), '<ellipse'), kind).toBe(kind === '1s' ? 1 : 0)
+    }
+  })
+
+  it('renders pin and sou faces as pure shapes — no text at all', () => {
+    // Stronger than the token regex: with zero <text> nodes, no p/s face can
+    // ever leak a tile-looking token or a stray numeral.
+    for (const r of RANKS) {
+      expect(chipOf(`${r}p` as TileKind), `${r}p`).not.toContain('<text')
+      expect(chipOf(`${r}s` as TileKind), `${r}s`).not.toContain('<text')
+    }
+  })
+
+  it('renders 34 pairwise-distinct faces', () => {
+    expect(new Set(TILE_KINDS.map(chipOf)).size).toBe(TILE_KINDS.length)
   })
 })
 
