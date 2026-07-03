@@ -1,0 +1,155 @@
+// T-011-01-01: characterization tests for the E-011 "gummed claim prompt" report
+// (owner playtest 2026-07-04: "the chi dialogue appears twice... seems like a race
+// condition"). Mounts the REAL App (mirrors app.riichi.tap.svelte.test.ts's
+// fake-timer/flushSync pattern) and drives it through real taps, pinning CURRENT
+// behavior with `// DEFECT:` markers where the E-011 fix tickets (T-011-02-*) will
+// flip the assertions. settleWindow's arbitration itself is correct and untested
+// here — drive.test.ts already covers it at the pure-function level; this suite
+// only asks what the PLAYER SEES when it runs inside the mounted app.
+//
+// Seed 344 (frozen, mined by src/app/drive.ts-style forcedAction/settleWindow
+// driving — a scratchpad scan over gameSeeds 1..400, tsumogiri on the player's own
+// turns, replayed once and pinned): five tsumogiri rounds (East draws+discards,
+// then South/West/North by real policy) land North's 5th discard on tile 30 (8m).
+// The window offers West a pon [28, 29] (both 8m) AND East (the player) two
+// duplicate-copy chi variants using [37, 44]/uses differ only in which 6m copy —
+// deduped by promptChoices to the one button "chi 8m with 6m 7m". A pon is offered
+// before any chi (legal.ts's frozen precedence), so the window is a genuine mixed
+// race: tapping the player's only chi choice loses to West's pon regardless. West
+// then owes its claim discard (tile 38), North draws and discards tile 76 (2s) —
+// and THAT discard opens a second window, offering the player three chi variants
+// on 2s (uses [83,87]/[83,84]/[83,86], all "3s4s" in kind), deduped to one button
+// "chi 2s with 3s 4s" — a different window, same call type, same one-button
+// layout, opening within three forced bot ticks (~750ms) of the first window
+// closing. This is the exact "appears twice" shape from the report.
+const RACE_GAME_SEED = 2654435561 // `344 ^ 0x9e3779b1 >>> 0` — game.ts's handSeedOf(gameSeed, 0) === 344
+
+import { flushSync, mount, unmount } from 'svelte'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import App from './App.svelte'
+
+const BOT_DELAY_MS = 250 // App.svelte's own pacing constant, duplicated per convention
+
+let cleanups: Array<() => void> = []
+afterEach(() => {
+  for (const cleanup of cleanups) cleanup()
+  cleanups = []
+  vi.useRealTimers()
+})
+
+beforeEach(() => {
+  vi.useFakeTimers()
+})
+
+function mountApp(initialSeed: number) {
+  const target = document.createElement('div')
+  document.body.appendChild(target)
+  const app = mount(App, { target, props: { initialSeed } })
+  cleanups.push(() => {
+    unmount(app)
+    target.remove()
+  })
+  flushSync()
+  return target
+}
+
+function drawnButton(target: HTMLElement): HTMLButtonElement | null {
+  return target.querySelector<HTMLButtonElement>('[aria-label="drawn tile"] button')
+}
+
+function callButtons(target: HTMLElement): HTMLButtonElement[] {
+  return Array.from(target.querySelectorAll<HTMLButtonElement>('.prompt .call'))
+}
+
+function claimPrompt(target: HTMLElement): HTMLElement | null {
+  return target.querySelector<HTMLElement>('[aria-label="call or pass"]')
+}
+
+/** Ticks the bot pacing timer forward until `done` is true; returns the tick count
+ * actually spent, or throws past maxTicks (mirrors app.riichi.tap.svelte.test.ts's
+ * own tickUntil, extended to report how many ticks it took — this suite cares not
+ * just THAT a window reopens but how QUICKLY, per the "appears twice" report). */
+async function tickUntil(
+  target: HTMLElement,
+  done: () => boolean,
+  maxTicks = 30,
+): Promise<number> {
+  for (let tick = 0; tick < maxTicks; tick++) {
+    if (done()) return tick
+    await vi.advanceTimersByTimeAsync(BOT_DELAY_MS)
+    flushSync()
+  }
+  throw new Error('tickUntil: exceeded maxTicks')
+}
+
+describe('the mixed claim-window race (seed 344)', () => {
+  it("loses the player's chi to West's pon with no visible outcome, then a second chi window opens within three ticks", async () => {
+    const target = mountApp(RACE_GAME_SEED)
+
+    // Five tsumogiri rounds — the player tsumogiris his own draw each time, the
+    // bots resume by real policy in between (tickUntil, same as every other
+    // App-mounted suite; no action count is hardcoded on the app side).
+    for (let round = 0; round < 5; round++) {
+      await tickUntil(target, () => drawnButton(target) !== null)
+      drawnButton(target)!.click()
+      flushSync()
+    }
+
+    // The window is up: exactly one claim button (the deduped chi variants), no
+    // win offer (nobody's tenpai here) — fixture sanity before the race itself.
+    await tickUntil(target, () => claimPrompt(target) !== null)
+    const firstPromptNode = claimPrompt(target)!
+    const firstCalls = callButtons(target)
+    expect(firstCalls).toHaveLength(1)
+    expect(firstCalls[0]!.getAttribute('aria-label')).toBe('chi 8m with 6m 7m')
+    expect(target.querySelector('[aria-label="west melds"]')).toBeNull()
+
+    const handTilesBefore = target.querySelectorAll('[aria-label="your hand"] button').length
+
+    // The player taps his only claim — and loses the window to West's pon: rules-
+    // correct atamahane/priority (pon precedes chi), but nothing in the rendered
+    // output says so.
+    firstCalls[0]!.click()
+    flushSync()
+
+    // DEFECT: the window closed (the prompt is gone — settleWindow resolved to
+    // SOMETHING), but the fold went to West, not the player: West holds a fresh
+    // meld and North's discard wears the claimed mark, while the player's own
+    // hand is untouched. Nothing in the DOM — no text, no separate element —
+    // names West or "pon" as what actually happened to the tap.
+    expect(claimPrompt(target)).toBeNull()
+    expect(target.querySelectorAll('[aria-label="your hand"] button')).toHaveLength(
+      handTilesBefore,
+    )
+    const westMelds = target.querySelector('[aria-label="west melds"]')
+    expect(westMelds).not.toBeNull()
+    expect(westMelds!.querySelector('[aria-label="claimed 8m from north"]')).not.toBeNull()
+    // The only place West's win is legible at all is reading the table state
+    // directly — there is no dedicated outcome notice anywhere in the render.
+    expect(target.querySelector('.notice, .outcome, [role="alert"], [aria-live]')).toBeNull()
+
+    // West owes its claim discard, North draws and discards next — and THAT
+    // discard opens a second window for the player: same call type (chi), same
+    // one-button layout, no distinguishing marker from the first prompt at all.
+    // Frozen (mined): this reopening takes exactly 3 forced ticks (West's claim
+    // discard, North's draw, North's discard) — well inside the epic's own
+    // "~250ms later" description of the report.
+    const ticks = await tickUntil(target, () => claimPrompt(target) !== null, 6)
+    expect(ticks).toBe(3)
+
+    const secondPromptNode = claimPrompt(target)!
+    const secondCalls = callButtons(target)
+    expect(secondCalls).toHaveLength(1)
+    expect(secondCalls[0]!.getAttribute('aria-label')).toBe('chi 2s with 3s 4s')
+
+    // DEFECT: the two prompts are structurally identical — same aria-label, same
+    // element/class shape, no fresh-prompt beat between them — exactly the
+    // "appeared twice" reading from the report, even though this is a genuinely
+    // NEW window on a different discard. (The E-011 fix adds the distinguishing
+    // beat; when it lands this equality is the assertion to flip.)
+    expect(secondPromptNode.getAttribute('aria-label')).toBe(
+      firstPromptNode.getAttribute('aria-label'),
+    )
+    expect(secondPromptNode.className).toBe(firstPromptNode.className)
+  }, 20_000)
+})
