@@ -443,3 +443,47 @@ describe('hidden-permutation equivalence (the AC property)', () => {
     }
   })
 })
+
+describe('no tile id outside the public zones (the AC inclusion)', () => {
+  /** Every id the view carries must be in the independently computed public set. */
+  function expectIncluded(state: TableState, seat: Seat): void {
+    const lawful = publicIds(state, seat)
+    for (const id of exposedTileIds(seatView(state, seat))) {
+      expect(lawful.has(id), `tile ${id} in seat ${seat}'s view is outside its public zones`).toBe(
+        true,
+      )
+    }
+  }
+
+  it('holds across the fc tsumogiri domain', () => {
+    fc.assert(
+      fc.property(seedArb, turnsArb, fc.boolean(), seatArb, (seed, turns, dangle, seat) => {
+        expectIncluded(foldedState(seed, turns, dangle), seat)
+      }),
+    )
+  })
+
+  it('holds at every prefix of every corpus game, for every seat', () => {
+    for (const record of corpus) {
+      for (let length = 0; length <= record.actions.length; length++) {
+        const state = foldPrefix(record, length)
+        for (let seat = 0; seat < SEAT_COUNT; seat++) {
+          expectIncluded(state, seat as Seat)
+        }
+      }
+    }
+  })
+
+  it('agari finals: the announced win is in the view and its tile inside the public set', () => {
+    for (const record of winCorpus) {
+      const state = foldRecord(record)
+      expect(state.win).not.toBeNull() // the pinned-carrier fact — keeps this test non-vacuous
+      for (let seat = 0; seat < SEAT_COUNT; seat++) {
+        const view = seatView(state, seat as Seat)
+        expect(view.win).toBe(state.win)
+        expect(publicIds(state, seat as Seat).has(view.win!.tile)).toBe(true)
+        expectIncluded(state, seat as Seat)
+      }
+    }
+  })
+})
