@@ -20,6 +20,17 @@
 // honor; 5p still grows three ways" — and deliberately local: a stronger tie-break
 // (ukeire) swaps in behind the same comparator without touching the arms.
 //
+// THE RIICHI STEP (T-009-02-01) rides the same tie-break rather than adding a second
+// one: whenever the discard arm's own scoring lands on shanten 0 (tenpai), the tile it
+// already chose is GUARANTEED to have a matching riichi offer (legal.ts's riichiOffers
+// scans the identical candidate order under the identical shanten condition), so the
+// step is a lookup, not a new scan. Declare it, unless doing so would lock in a DEAD
+// WAIT — every kind that would complete the hand already exhausted by the seat's own
+// hand and melds (waits.ts's own convention), so the declared hand could never win by
+// ron or tsumo, ever. Furiten (the wait sitting in the seat's own pond) is deliberately
+// NOT an exception: it still wins by tsumo and is a real, if conservative, choice —
+// only a hand that can win by nothing is treated as the mistake.
+//
 // THE CALL BRANCH, callPolicy, is the module's second face: claim windows and houtei
 // for one seat. Ron first, unconditionally — legality already gated completion,
 // furiten, and the one-yaku win gate, so an offered ron is always a taken win. Claims
@@ -152,7 +163,29 @@ export function discardPolicy(view: SeatView, offered: readonly HandAction[]): H
       bestDistance = distance
     }
   }
-  if (best !== null) return best
+  if (best !== null) {
+    // T-009-02-01: declare whenever a matching riichi offer exists for the tile the
+    // scoring loop above already chose — bestShanten === 0 is exactly the condition
+    // legal.ts's riichiOffers uses per candidate tile, over the identical candidate
+    // order, so a riichi offer for `best`'s tile is guaranteed present whenever the
+    // seat is riichi-eligible at all; no independent riichi scan or tie-break is
+    // needed. The one documented exception: a dead wait (isDeadWait) — every kind
+    // that would complete the hand is already exhausted by the seat's own hand and
+    // melds, so the declared hand could never win by ron or tsumo. Furiten (the wait
+    // sitting in the seat's own pond) is deliberately NOT an exception: it still wins
+    // by tsumo and is a real, if conservative, choice — only an unwinnable hand is
+    // treated as a mistake worth avoiding.
+    if (bestShanten === 0) {
+      const bestTile = (best as Extract<HandAction, { type: 'discard' }>).tile
+      for (const action of offered) {
+        if (action.type === 'riichi' && action.seat === seat && action.tile === bestTile) {
+          if (!isDeadWait(pool!, view.melds[seat], bestTile)) return action
+          break
+        }
+      }
+    }
+    return best
+  }
   for (const action of offered) {
     if (action.type === 'draw' && action.seat === seat) return action
   }
