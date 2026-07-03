@@ -309,6 +309,63 @@ describe('meld display (SSR)', () => {
   })
 })
 
+// The hand-end screen: won records folded from the frozen win anchors. The player's
+// tsumo (seed 542630, drive.test.ts's agari walk verbatim) and a bot's ron (core's
+// seed-3951 anchor: seat 3 rons East's turn-0 tsumogiri 72, 1s) — the screen names
+// winner, winning tile, and yaku off table.win, never off the markup's own math.
+describe('hand-end view (SSR)', () => {
+  const dealtWin = foldRecord({ seed: 542630, actions: [] })
+  const won = foldRecord({
+    seed: 542630,
+    actions: [
+      ...tsumogiriTurns(dealtWin.live, 32),
+      { type: 'draw', seat: 0 },
+      { type: 'tsumo', seat: 0 },
+    ],
+  })
+  const { body } = render(Table, { props: { table: won } })
+
+  it('names the winner, marked as you when the player won', () => {
+    expect(won.win?.winner).toBe(0) // fixture sanity
+    // Whitespace-collapsed: the sentence is the fact, the SSR line wrapping is not.
+    expect(body.replace(/\s+/g, ' ')).toContain('East (you) wins by tsumo')
+  })
+
+  it('shows the winning tile in its own labeled region', () => {
+    expect(regionTokens(body, 'winning tile', '</span>')).toEqual([
+      kindOf(won.win!.tile),
+    ])
+  })
+
+  it('lists every yaku the fold recorded, by name', () => {
+    expect(won.win?.yaku).toEqual(['menzen-tsumo', 'pinfu']) // fixture sanity
+    const start = body.indexOf('aria-label="yaku"')
+    expect(start).toBeGreaterThanOrEqual(0)
+    const yakuList = body.slice(start, body.indexOf('</ul>', start))
+    for (const name of won.win!.yaku) {
+      expect(yakuList).toContain(`>${name}<`)
+    }
+  })
+
+  it('marks no seat active and shows no ryuukyoku line on a won hand', () => {
+    expect(body).not.toContain('aria-current')
+    expect(body).not.toContain('ryuukyoku')
+  })
+
+  it("names a bot winner by wind with the ron's discarder — and no you-mark", () => {
+    const live3951 = foldRecord({ seed: 3951, actions: [] }).live
+    const botWon = foldRecord({
+      seed: 3951,
+      actions: [...tsumogiriTurns(live3951, 1), { type: 'ron', seat: 3, tile: 72 }],
+    })
+    expect(botWon.win).toMatchObject({ by: 'ron', winner: 3, from: 0 })
+    const bot = render(Table, { props: { table: botWon } }).body
+    expect(bot.replace(/\s+/g, ' ')).toContain('North wins by ron from East')
+    expect(bot).not.toContain('(you) wins')
+    expect(regionTokens(bot, 'winning tile', '</span>')).toEqual(['1s'])
+  })
+})
+
 // Wall-exhausted record: all 70 post-deal live tiles drawn and discarded tsumogiri —
 // the fold ends in ryuukyoku exactly as the last discard lands.
 describe('wall-exhausted table view (SSR)', () => {

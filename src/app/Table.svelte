@@ -111,6 +111,25 @@
     {#if table.phase === 'ryuukyoku'}
       <p class="ended" role="status">ryuukyoku — exhaustive draw</p>
     {/if}
+    <!-- The hand-end screen: the fold's win reading verbatim — winner, form, tile,
+         yaku (the win !== null conjunct is a type guard: agari implies a win). The
+         tile chip is the summary's own copy; the physical winning tile never left
+         its zone (a tsumo's sits in drawn, a ron's in the discarder's pond). Yaku
+         render as the record's names — the teaching glossary that explains them is
+         its own ticket. -->
+    {#if table.phase === 'agari' && table.win !== null}
+      {@const win = table.win}
+      <div class="win-summary" role="status">
+        <p class="ended">
+          {SEATS[win.winner].wind}{win.winner === 0 ? ' (you)' : ''} wins by
+          {win.by}{win.by === 'ron' ? ` from ${SEATS[win.from].wind}` : ''}
+        </p>
+        <span class="winning-tile" aria-label="winning tile"><Tile id={win.tile} /></span>
+        <ul class="yaku" aria-label="yaku">
+          {#each win.yaku as name (name)}<li>{name}</li>{/each}
+        </ul>
+      </div>
+    {/if}
   </div>
 </section>
 
@@ -246,6 +265,26 @@
     font-size: 0.8rem;
     letter-spacing: 0.08em;
     text-transform: uppercase;
+  }
+
+  .win-summary {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.3rem;
+  }
+
+  .yaku {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.5rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    color: var(--ink);
   }
 
   .center {
