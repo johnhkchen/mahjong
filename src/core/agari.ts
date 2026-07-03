@@ -125,6 +125,41 @@ function standardDecompositions(counts: number[], setCount: number): AgariDecomp
   return results
 }
 
+/**
+ * The chiitoitsu read: exactly seven kinds held at exactly two copies each. Four of
+ * a kind is NOT two pairs — a count of 4 fails the ===2 test, which is the rule,
+ * not an accident. Called only for a 14-tile, zero-meld query (any call breaks the
+ * form by rule; 14 − 3k tiles cannot hold seven pairs anyway).
+ */
+function chiitoitsuOf(counts: readonly number[]): AgariDecomposition | null {
+  const pairs: TileKind[] = []
+  for (let k = 0; k < KIND_COUNT; k += 1) {
+    if (counts[k] === 0) continue
+    if (counts[k] !== 2) return null
+    pairs.push(TILE_KINDS[k])
+  }
+  return pairs.length === 7 ? { form: 'chiitoitsu', pairs } : null
+}
+
+/** The 13 kokushi kind indices: terminals of each numbered suit, then every honor. */
+const KOKUSHI_KIND_INDEXES: readonly number[] = [0, 8, 9, 17, 18, 26, 27, 28, 29, 30, 31, 32, 33]
+
+/**
+ * The kokushi read: all 13 terminal/honor kinds present, one of them doubled. Over
+ * a 14-tile, zero-meld query the arithmetic closes the form: 13 kinds all ≥ 1 sum
+ * to at least 13, so a 14th tile is either the one doubled kokushi kind (a win) or
+ * a stray kind that forces every kokushi count to exactly 1 (no pair — null); a
+ * count of 3 among all-present kokushi kinds would need 15 tiles and cannot occur.
+ */
+function kokushiOf(counts: readonly number[]): AgariDecomposition | null {
+  let pair: TileKind | null = null
+  for (const k of KOKUSHI_KIND_INDEXES) {
+    if (counts[k] === 0) return null
+    if (counts[k] === 2) pair = TILE_KINDS[k]
+  }
+  return pair === null ? null : { form: 'kokushi', pair }
+}
+
 /** A hand holds at most four melds — the four-sets-and-a-pair ceiling. */
 const MAX_MELDS = 4
 
@@ -164,7 +199,14 @@ export function decomposeAgari(
     )
   }
   const counts = countsOf(concealed)
-  return standardDecompositions(counts, MAX_MELDS - melds.length)
+  const results = standardDecompositions(counts, MAX_MELDS - melds.length)
+  if (melds.length === 0) {
+    const chiitoitsu = chiitoitsuOf(counts)
+    if (chiitoitsu !== null) results.push(chiitoitsu)
+    const kokushi = kokushiOf(counts)
+    if (kokushi !== null) results.push(kokushi)
+  }
+  return results
 }
 
 /** True when the concealed tiles + melds complete a win in any form — the guard read. */
