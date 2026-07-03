@@ -719,15 +719,17 @@ function playPolicy(seed: number): {
   endPhase: string
   claimsFolded: number
   ronsFolded: number
+  riichiFolded: number
 } {
   const actions: HandAction[] = []
   let claimsFolded = 0
   let ronsFolded = 0
+  let riichiFolded = 0
   for (;;) {
     const state = foldRecord({ seed, actions })
     const legal = legalActions(state)
     if (state.phase === 'agari' || legal.length === 0) {
-      return { actions, endPhase: state.phase, claimsFolded, ronsFolded }
+      return { actions, endPhase: state.phase, claimsFolded, ronsFolded, riichiFolded }
     }
     const step = actions.length
     let chosen: HandAction
@@ -787,7 +789,7 @@ function playPolicy(seed: number): {
       if (tsumo && chosen !== tsumo) {
         throw new Error(`seed ${seed} step ${step}: offered tsumo was not taken`)
       }
-      if (chosen.type === 'discard') {
+      if (chosen.type === 'discard' || chosen.type === 'riichi') {
         const pool = state.drawn === null ? [...state.hands[seat]] : [...state.hands[seat], state.drawn]
         const melds = state.melds[seat]
         const score = (tile: TileId): number =>
@@ -798,10 +800,16 @@ function playPolicy(seed: number): {
             .map((a) => score(a.tile)),
         )
         if (score(chosen.tile) !== best) {
-          throw new Error(`seed ${seed} step ${step}: discard is not shanten-minimal`)
+          throw new Error(`seed ${seed} step ${step}: ${chosen.type} is not shanten-minimal`)
         }
         if (state.drawn !== null && score(chosen.tile) > shanten(state.hands[seat].map(kindOf), melds)) {
-          throw new Error(`seed ${seed} step ${step}: discard raised shanten past the pre-draw hand`)
+          throw new Error(`seed ${seed} step ${step}: ${chosen.type} raised shanten past the pre-draw hand`)
+        }
+        if (chosen.type === 'riichi') {
+          if (score(chosen.tile) !== 0) {
+            throw new Error(`seed ${seed} step ${step}: riichi declared without reaching tenpai`)
+          }
+          riichiFolded += 1
         }
       }
     }
@@ -821,15 +829,20 @@ describe('property: the policy pair over seeded whole games', () => {
 
   it('plays every corpus seed to an end under the AC at every decision point', { timeout: 60_000 }, () => {
     let claims = 0
+    let riichis = 0
     for (const seed of CORPUS_SEEDS) {
-      const { endPhase, claimsFolded } = playPolicy(seed)
+      const { endPhase, claimsFolded, riichiFolded } = playPolicy(seed)
       expect(['ryuukyoku', 'agari']).toContain(endPhase)
       claims += claimsFolded
+      riichis += riichiFolded
     }
     // The branch must actually be exercised: a driver that silently never consults
     // callPolicy would pass every per-step oracle. If a corpus change ever zeroes
     // this, widen the corpus rather than weakening the check.
     expect(claims).toBeGreaterThan(0)
+    // T-009-02-01: same posture — bots must actually declare riichi somewhere in the
+    // sample, not just be capable of it in principle.
+    expect(riichis).toBeGreaterThan(0)
   })
 
   it('replays byte-identically — same seed, same action list (the T-006-03-04 rehearsal)', { timeout: 60_000 }, () => {
