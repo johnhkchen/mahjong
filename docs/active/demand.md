@@ -15,9 +15,6 @@ and off this board.
 
 ## Tier 1 — A finishable hand (P1: without this there is nothing)
 
-- **One competent bot table** — three non-cheating opponents that see only a player's view, draw
-  from the same wall, and play a real hand start to finish. _(advances P1)_
-
 ## Tier 2 — The teaching layer (P2: the reason this repo exists)
 
 - **Shanten + tenpai / riichi prompts** — surface distance-to-tenpai and offer "you're tenpai —
