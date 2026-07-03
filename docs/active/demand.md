@@ -56,8 +56,5 @@ and off this board.
 
 ## Tier 5 — Rigor as the series exhibit (P5: where the one-shot can't follow)
 
-- **Scoring property tests** — the han/fu → points crown: property-tested wall-is-exactly-136,
-  shanten-calculator correctness, and yaku detection + score tables over seeded hands. _(advances
-  P5)_
 - **Attract-mode showcase bundle** — the production engine + view folding a seeded AI-vs-AI hand
   in the visitor's browser as the b28.dev cover, no backend, pinned rebuilds. _(advances P3, P5)_
