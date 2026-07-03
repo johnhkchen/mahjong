@@ -1,6 +1,7 @@
 <script lang="ts">
   import { kindOf, type HandAction, type TileId } from '../core'
   import type { ClaimChoice } from './drive'
+  import { term } from './dictionary.svelte'
   import Tile from './Tile.svelte'
 
   // The call/pass prompt: pure input wiring, computation-free. `choices` is
@@ -38,9 +39,10 @@
   } = $props()
 
   // Parlor vocabulary for the button face: a daiminkan is called "kan" at the table.
-  // The payload keeps the record's discriminant — display only.
+  // The payload keeps the record's discriminant — display only. Routed through the term
+  // dictionary (T-010-01-01) so the label follows the active terminology.
   function callName(type: ClaimChoice['type'] | 'tsumo' | 'ron'): string {
-    return type === 'daiminkan' ? 'kan' : type
+    return term(type === 'daiminkan' ? 'kan' : type)
   }
 </script>
 
@@ -55,7 +57,7 @@
       <button
         type="button"
         class="call win"
-        aria-label={win.type === 'ron' ? `ron ${kindOf(win.tile)}` : 'tsumo'}
+        aria-label={win.type === 'ron' ? `${callName('ron')} ${kindOf(win.tile)}` : callName('tsumo')}
         onclick={() => onwin?.()}
       >
         <span class="name">{callName(win.type)}</span>
