@@ -1,5 +1,6 @@
 <script lang="ts">
   import { kindIndexOf, kindOf, type TableState, type TileId } from '../core'
+  import HandEnd from './HandEnd.svelte'
   import Tile from './Tile.svelte'
 
   // Stateless presentational table: the folded TableState in via one prop, markup out.
@@ -10,7 +11,19 @@
   // presentation", deal.ts/TableState). `ontap` is input wiring OUT, not a fact in:
   // taps report the tile, and legality lives entirely with the owner of the record —
   // buttons render whenever their tiles do, an illegal tap is the caller's no-op.
-  let { table, ontap }: { table: TableState; ontap?: (tile: TileId) => void } = $props()
+  // `scores`/`onnext` (T-008-03-02): pure pass-through to HandEnd — Table adds no
+  // logic of its own for either, matching `ontap`'s own "input wiring OUT" role.
+  let {
+    table,
+    ontap,
+    scores,
+    onnext,
+  }: {
+    table: TableState
+    ontap?: (tile: TileId) => void
+    scores?: readonly [number, number, number, number]
+    onnext?: () => void
+  } = $props()
 
   // Seat 0 (East) is the player. Stable copy-sort into canonical kind order via the
   // public accessors — draw order is the record's truth and stays untouched upstream.
@@ -108,28 +121,10 @@
       <span class="label">dora indicator</span>
     </div>
     <span class="label">{table.live.length} tiles left</span>
-    {#if table.phase === 'ryuukyoku'}
-      <p class="ended" role="status">ryuukyoku — exhaustive draw</p>
-    {/if}
-    <!-- The hand-end screen: the fold's win reading verbatim — winner, form, tile,
-         yaku (the win !== null conjunct is a type guard: agari implies a win). The
-         tile chip is the summary's own copy; the physical winning tile never left
-         its zone (a tsumo's sits in drawn, a ron's in the discarder's pond). Yaku
-         render as the record's names — the teaching glossary that explains them is
-         its own ticket. -->
-    {#if table.phase === 'agari' && table.win !== null}
-      {@const win = table.win}
-      <div class="win-summary" role="status">
-        <p class="ended">
-          {SEATS[win.winner].wind}{win.winner === 0 ? ' (you)' : ''} wins by
-          {win.by}{win.by === 'ron' ? ` from ${SEATS[win.from].wind}` : ''}
-        </p>
-        <span class="winning-tile" aria-label="winning tile"><Tile id={win.tile} /></span>
-        <ul class="yaku" aria-label="yaku">
-          {#each win.yaku as name (name)}<li>{name}</li>{/each}
-        </ul>
-      </div>
-    {/if}
+    <!-- The hand-end screen: score-breakdown-screen (T-008-03-01) — every yaku with
+         its han, dora, fu/points, and the four updated seat scores, all read off
+         core's scorer via HandEnd, never computed here. -->
+    <HandEnd {table} {scores} {onnext} />
   </div>
 </section>
 
@@ -287,34 +282,6 @@
     touch-action: manipulation;
   }
 
-  .ended {
-    margin: 0;
-    color: var(--ink);
-    font-size: 0.8rem;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-  }
-
-  .win-summary {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.3rem;
-  }
-
-  .yaku {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: center;
-    gap: 0.5rem;
-    margin: 0;
-    padding: 0;
-    list-style: none;
-    font-size: 0.7rem;
-    letter-spacing: 0.08em;
-    color: var(--ink);
-  }
-
   .center {
     grid-area: center;
     display: flex;
@@ -384,19 +351,6 @@
       }
     }
 
-    /* Hand-end reveal: the ryuukyoku line (a direct child of .center — the win
-       sentence's own .ended sits inside .win-summary and must not double-run)
-       and the win summary rise quietly into place. */
-    .center > .ended,
-    .win-summary {
-      animation: reveal-rise 220ms ease-out;
-    }
-    @keyframes reveal-rise {
-      from {
-        opacity: 0;
-        transform: translateY(0.35rem);
-      }
-    }
   }
 
   /* Motion: draw + discard entrances — insertion transitions via

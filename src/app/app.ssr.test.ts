@@ -7,7 +7,15 @@
 
 import { render } from 'svelte/server'
 import { describe, expect, it } from 'vitest'
-import { foldRecord, kindOf, legalActions, type HandAction, type TileId } from '../core'
+import {
+  foldRecord,
+  handSeedOf,
+  kindOf,
+  legalActions,
+  scoreBreakdownOf,
+  type HandAction,
+  type TileId,
+} from '../core'
 import { PLAYER, promptChoices, winChoice } from './drive'
 import App from './App.svelte'
 import ClaimPrompt from './ClaimPrompt.svelte'
@@ -55,7 +63,9 @@ function tsumogiriTurns(live: readonly TileId[], n: number): HandAction[] {
 
 describe('dealt-table view (SSR)', () => {
   const { body } = render(App, { props: { initialSeed: BOOT_SEED } })
-  const table = foldRecord({ seed: BOOT_SEED, actions: [] })
+  // T-008-03-02: App now folds a GameRecord, so hand 0's wall derives from
+  // handSeedOf(gameSeed, 0), never the raw gameSeed directly (research.md §7).
+  const table = foldRecord({ seed: handSeedOf(BOOT_SEED, 0), actions: [] })
 
   it('renders exactly the 13 dealt tiles and the dora indicator, derived via the core fold', () => {
     const expected = [...table.hands[0].map(kindOf), kindOf(table.doraIndicator)]
@@ -312,7 +322,8 @@ describe('meld display (SSR)', () => {
 // The hand-end screen: won records folded from the frozen win anchors. The player's
 // tsumo (seed 542630, drive.test.ts's agari walk verbatim) and a bot's ron (core's
 // seed-3951 anchor: seat 3 rons East's turn-0 tsumogiri 72, 1s) — the screen names
-// winner, winning tile, and yaku off table.win, never off the markup's own math.
+// winner, winning tile, and the score BREAKDOWN (T-008-03-01) off scoreBreakdownOf,
+// never off table.win.yaku's cross-reading union or the markup's own math.
 describe('hand-end view (SSR)', () => {
   const dealtWin = foldRecord({ seed: 542630, actions: [] })
   const won = foldRecord({
@@ -324,6 +335,7 @@ describe('hand-end view (SSR)', () => {
     ],
   })
   const { body } = render(Table, { props: { table: won } })
+  const breakdown = scoreBreakdownOf(won)
 
   it('names the winner, marked as you when the player won', () => {
     expect(won.win?.winner).toBe(0) // fixture sanity
@@ -337,19 +349,81 @@ describe('hand-end view (SSR)', () => {
     ])
   })
 
-  it('lists every yaku the fold recorded, by name', () => {
-    expect(won.win?.yaku).toEqual(['menzen-tsumo', 'pinfu']) // fixture sanity
+  it('lists every yaku the winning reading priced, each with its han', () => {
+    expect(breakdown.kind).toBe('agari')
+    if (breakdown.kind !== 'agari') throw new Error('unreachable')
+    expect(breakdown.yaku).toEqual([
+      { name: 'menzen-tsumo', han: 1 },
+      { name: 'pinfu', han: 1 },
+    ]) // fixture sanity — the SAME names table.win.yaku's union names for this hand
     const start = body.indexOf('aria-label="yaku"')
     expect(start).toBeGreaterThanOrEqual(0)
     const yakuList = body.slice(start, body.indexOf('</ul>', start))
-    for (const name of won.win!.yaku) {
-      expect(yakuList).toContain(`>${name}<`)
+    for (const line of breakdown.yaku) {
+      expect(yakuList).toContain(`>${line.name} ${line.han}han<`)
     }
+  })
+
+  it('shows the dora line exactly when doraHan is nonzero', () => {
+    expect(breakdown.kind).toBe('agari')
+    if (breakdown.kind !== 'agari') throw new Error('unreachable')
+    expect(breakdown.doraHan).toBe(1) // fixture sanity — this hand holds one dora
+    expect(body).toContain(`aria-label="dora">dora ${breakdown.doraHan}<`)
+  })
+
+  it('shows the fu/han/points line for a non-limit hand', () => {
+    expect(breakdown.kind).toBe('agari')
+    if (breakdown.kind !== 'agari') throw new Error('unreachable')
+    expect(breakdown.limitName).toBeNull() // fixture sanity
+    const start = body.indexOf('aria-label="points line"')
+    expect(start).toBeGreaterThanOrEqual(0)
+    const line = body.slice(start, body.indexOf('</p>', start))
+    expect(line).toContain(`${breakdown.fu}fu`)
+    expect(line).toContain(`${breakdown.han}han`)
+    expect(line).toContain(`${breakdown.points}`)
+  })
+
+  it('lists all four updated seat scores, starting total plus the settlement deltas', () => {
+    expect(breakdown.kind).toBe('agari')
+    if (breakdown.kind !== 'agari') throw new Error('unreachable')
+    const start = body.indexOf('aria-label="scores"')
+    expect(start).toBeGreaterThanOrEqual(0)
+    const scoresList = body.slice(start, body.indexOf('</ul>', start))
+    for (const score of breakdown.scores) {
+      expect(scoresList).toContain(`${score}`)
+    }
+    expect(breakdown.scores.reduce((a, b) => a + b, 0)).toBe(4 * 25000) // conservation
   })
 
   it('marks no seat active and shows no ryuukyoku line on a won hand', () => {
     expect(body).not.toContain('aria-current')
     expect(body).not.toContain('ryuukyoku')
+  })
+
+  it('shows a passed-in scores override instead of the hand-only breakdown total', () => {
+    // T-008-03-02: App carries a running game total down through `scores`; when
+    // present it wins over breakdown's own 25000-plus-deltas figure entirely.
+    const carried = [40000, 15000, 20000, 25000] as const
+    const overridden = render(Table, { props: { table: won, scores: carried } }).body
+    const start = overridden.indexOf('aria-label="scores"')
+    expect(start).toBeGreaterThanOrEqual(0)
+    const scoresList = overridden.slice(start, overridden.indexOf('</ul>', start))
+    for (const score of carried) {
+      expect(scoresList).toContain(`${score}`)
+    }
+    // breakdown's own hand-only total is absent wherever it differs from the
+    // override — proves the override REPLACES rather than merely supplements it.
+    for (const score of breakdown.scores) {
+      if (!carried.includes(score as (typeof carried)[number])) {
+        expect(scoresList).not.toContain(`${score}`)
+      }
+    }
+  })
+
+  it('renders a next-hand button exactly when onnext is passed', () => {
+    const withCallback = render(Table, { props: { table: won, onnext: () => {} } }).body
+    expect(withCallback).toContain('next hand')
+    expect(body).not.toContain('next hand') // the outer block's render never passed onnext
   })
 
   it("names a bot winner by wind with the ron's discarder — and no you-mark", () => {
@@ -371,6 +445,7 @@ describe('hand-end view (SSR)', () => {
 describe('wall-exhausted table view (SSR)', () => {
   const exhausted = foldRecord({ seed: BOOT_SEED, actions: tsumogiriTurns(dealt.live, 70) })
   const { body } = render(Table, { props: { table: exhausted } })
+  const breakdown = scoreBreakdownOf(exhausted)
 
   it('shows the ryuukyoku end state with the wall at zero', () => {
     expect(exhausted.phase).toBe('ryuukyoku')
@@ -380,5 +455,59 @@ describe('wall-exhausted table view (SSR)', () => {
 
   it('marks no seat as active once the hand has ended', () => {
     expect(body).not.toContain('aria-current')
+  })
+
+  it('shows a passed-in scores override on a ryuukyoku screen too', () => {
+    const carried = [30000, 20000, 25000, 25000] as const
+    const overridden = render(Table, { props: { table: exhausted, scores: carried } }).body
+    const start = overridden.indexOf('aria-label="scores"')
+    const scoresList = overridden.slice(start, overridden.indexOf('</ul>', start))
+    for (const score of carried) {
+      expect(scoresList).toContain(`${score}`)
+    }
+  })
+
+  it('renders a next-hand button exactly when onnext is passed, on ryuukyoku too', () => {
+    const withCallback = render(Table, { props: { table: exhausted, onnext: () => {} } }).body
+    expect(withCallback).toContain('next hand')
+    expect(body).not.toContain('next hand')
+  })
+
+  it('shows every seat tenpai/noten and the bappu-exchanged scores, conserved at 100000', () => {
+    expect(breakdown.kind).toBe('ryuukyoku')
+    if (breakdown.kind !== 'ryuukyoku') throw new Error('unreachable')
+    const start = body.indexOf('aria-label="tenpai"')
+    expect(start).toBeGreaterThanOrEqual(0)
+    const tenpaiList = body.slice(start, body.indexOf('</ul>', start))
+    const WIND = ['East', 'South', 'West', 'North']
+    for (const [seat, isTenpai] of breakdown.tenpai.entries()) {
+      expect(tenpaiList).toContain(`${WIND[seat]}: ${isTenpai ? 'tenpai' : 'noten'}`)
+    }
+    const scoresStart = body.indexOf('aria-label="scores"')
+    expect(scoresStart).toBeGreaterThanOrEqual(0)
+    const scoresList = body.slice(scoresStart, body.indexOf('</ul>', scoresStart))
+    for (const score of breakdown.scores) {
+      expect(scoresList).toContain(`${score}`)
+    }
+    // No per-seat shanten recomputation needed here — conservation alone proves the
+    // bappu exchange landed correctly, matching one of settlement.test.ts's five splits.
+    expect(breakdown.scores.reduce((a, b) => a + b, 0)).toBe(4 * 25000)
+  })
+})
+
+// A mid-hand table renders no hand-end region at all — HandEnd is silent while playing.
+describe('no hand-end region while playing (SSR)', () => {
+  it('renders neither a yaku, points, nor scores region on the freshly dealt boot', () => {
+    const { body } = render(Table, { props: { table: dealt } })
+    expect(body).not.toContain('aria-label="yaku"')
+    expect(body).not.toContain('aria-label="points line"')
+    expect(body).not.toContain('aria-label="scores"')
+  })
+
+  it('renders no next-hand button while playing, even when onnext is passed', () => {
+    // HandEnd's whole screen is gated on the hand having ended (breakdown !== null);
+    // a mid-hand table must not show the control regardless of what App wires in.
+    const { body } = render(Table, { props: { table: dealt, onnext: () => {} } })
+    expect(body).not.toContain('next hand')
   })
 })
