@@ -86,3 +86,11 @@ Done, with two deviations found while writing it (both fixed before commit):
 
 All 8 tests pass; full suite re-run (911/911, twice) to confirm no cross-file leakage from this
 new file's `setTerminology`/`vi.resetModules()` usage — none found. `just check` clean.
+
+## Step 4 — `app.ssr.test.ts` addition
+
+Done. New `describe('terminology (SSR, no localStorage)', ...)` block, `console.warn`/
+`console.error` spies wrapped directly around the `render()` call (unlike the file's other
+`describe` blocks, which `render()` at describe-collection time — this one needs the spy active
+during the render itself). `--project node` run green (53/53), full suite green (912/912),
+`just check` clean.

@@ -6,7 +6,7 @@
 // stateless view's whole contract is its one prop.
 
 import { render } from 'svelte/server'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   foldRecord,
   furitenSeal,
@@ -102,6 +102,26 @@ describe('dealt-table view (SSR)', () => {
 
   it('exposes the table landmark', () => {
     expect(body).toContain('aria-label="mahjong table"')
+  })
+})
+
+// T-010-01-02's own SSR contract: the Node test project has no `localStorage`/`window`
+// global (dictionary.svelte.ts's `loadStored()`/`setTerminology()` guard on `window`'s
+// absence, never touching the Node-only `localStorage` accessor that would otherwise
+// warn on a mere touch — see dictionary.svelte.ts's own comment). This turns the
+// ticket's AC phrase "without warnings" into a real assertion rather than an assumption
+// that nothing crashing means nothing warned.
+describe('terminology (SSR, no localStorage)', () => {
+  it('renders the default romaji terminology and never touches console.warn/error', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { body } = render(App, { props: { initialSeed: BOOT_SEED } })
+    expect(body.split('East').length - 1).toBe(1)
+    expect(body).not.toContain('東')
+    expect(warn).not.toHaveBeenCalled()
+    expect(error).not.toHaveBeenCalled()
+    warn.mockRestore()
+    error.mockRestore()
   })
 })
 
