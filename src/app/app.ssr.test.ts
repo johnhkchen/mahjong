@@ -9,11 +9,13 @@ import { render } from 'svelte/server'
 import { describe, expect, it } from 'vitest'
 import {
   foldRecord,
+  furitenSeal,
   handSeedOf,
   kindOf,
   legalActions,
   scoreBreakdownOf,
   seatView,
+  yakulessTenpai,
   type HandAction,
   type TileId,
 } from '../core'
@@ -331,6 +333,61 @@ describe('tenpai hint', () => {
   it('is null at the freshly dealt boot — no draw yet, nothing to hint', () => {
     const dealtH = foldRecord({ seed: handSeedOf(BOOT_SEED, 0), actions: [] })
     expect(tenpaiHint(seatView(dealtH, PLAYER))).toBeNull()
+  })
+})
+
+// T-009-03-02's two ambient "why can't I win" facts, rendered inside Table
+// (not the console slot — App.svelte passes both straight through as props;
+// see design.md Decision 5). Table has no seat-awareness of WHOSE fact either
+// prop represents — it always labels the region under the East/"you" seat —
+// so these tests exercise the real render contract with real core-derived
+// values, reusing legal.win.test.ts's own frozen anchors (RON_SEED = 3951, a
+// seat sealed then cleared by temporary furiten) and legal.furiten.test.ts's
+// own YAKULESS_SEED analogue mined for seat 0 specifically (below).
+describe('furiten badge and yakuless notice (SSR)', () => {
+  const RON_SEED = 3951
+  const liveRon = foldRecord({ seed: RON_SEED, actions: [] }).live
+  const sealed = foldRecord({ seed: RON_SEED, actions: tsumogiriTurns(liveRon, 2) })
+  const cleared = foldRecord({ seed: RON_SEED, actions: tsumogiriTurns(liveRon, 4) })
+
+  it('renders the furiten region naming the sealing tile while sealed', () => {
+    const seal = furitenSeal(sealed, 3)
+    expect(seal).not.toBeNull()
+    expect(kindOf(seal!)).toBe('1s')
+    const { body } = render(Table, { props: { table: sealed, furitenTile: seal } })
+    expect(body).toContain('aria-label="furiten"')
+    expect(body).toContain('>1s<')
+    expect(body).toContain('tsumo still wins')
+  })
+
+  it('renders nothing once the temporary seal lifts', () => {
+    expect(furitenSeal(cleared, 3)).toBeNull()
+    const { body } = render(Table, { props: { table: cleared, furitenTile: furitenSeal(cleared, 3) } })
+    expect(body).not.toContain('aria-label="furiten"')
+  })
+
+  // Seed 20899 — seat 0 dealt tenpai (waits 5m/1s), closed, no actions needed:
+  // neither wait carries a yaku (mined against yakulessTenpai directly, this
+  // ticket's own scan; never regenerate).
+  const YAKULESS_PLAYER_SEED = 20899
+
+  it('renders the yakuless notice for a closed, unlocked, yakuless tenpai hand', () => {
+    const state = foldRecord({ seed: YAKULESS_PLAYER_SEED, actions: [] })
+    expect(yakulessTenpai(state, 0)).toBe(true)
+    const { body } = render(Table, { props: { table: state, yakulessTenpai: true } })
+    expect(body).toContain('aria-label="yakuless tenpai"')
+    expect(body).toContain('no yaku — this hand can only win by tsumo; riichi would fix this')
+  })
+
+  it('renders neither region for a freshly dealt hand — nothing sealed, not yet tenpai', () => {
+    const dealt = foldRecord({ seed: handSeedOf(BOOT_SEED, 0), actions: [] })
+    expect(furitenSeal(dealt, PLAYER)).toBeNull()
+    expect(yakulessTenpai(dealt, PLAYER)).toBe(false)
+    const { body } = render(Table, {
+      props: { table: dealt, furitenTile: furitenSeal(dealt, PLAYER), yakulessTenpai: yakulessTenpai(dealt, PLAYER) },
+    })
+    expect(body).not.toContain('aria-label="furiten"')
+    expect(body).not.toContain('aria-label="yakuless tenpai"')
   })
 })
 
