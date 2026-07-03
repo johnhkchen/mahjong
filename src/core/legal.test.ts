@@ -283,7 +283,7 @@ const ANCHORS: ReadonlyArray<{ label: string; seed: number; actions: readonly Ha
 ]
 
 describe('the set is the closed form', () => {
-  it('pre-draw: the turn seat’s draw leads; every further offer claims the open window (property)', () => {
+  it('pre-draw: the turn seat’s draw leads; every further offer rons or claims the open window, rons first (property)', () => {
     fc.assert(
       fc.property(seedArb, fc.integer({ min: 0, max: FULL_TURNS - 1 }), (seed, turns) => {
         const state = foldRecord(tsumogiriRecord(seed, turns))
@@ -296,21 +296,32 @@ describe('the set is the closed form', () => {
           return
         }
         for (const action of offered.slice(1)) {
-          // Claims only: they name the window's tile, never the discarder's seat,
-          // and a chi comes only from the seat whose left neighbor discarded.
-          expect(['pon', 'daiminkan', 'chi']).toContain(action.type)
-          if (action.type !== 'pon' && action.type !== 'daiminkan' && action.type !== 'chi') return
+          // Rons and claims only: they name the window's tile, never the
+          // discarder's seat, and a chi comes only from the seat whose left
+          // neighbor discarded.
+          expect(['ron', 'pon', 'daiminkan', 'chi']).toContain(action.type)
+          if (
+            action.type !== 'ron' &&
+            action.type !== 'pon' &&
+            action.type !== 'daiminkan' &&
+            action.type !== 'chi'
+          )
+            return
           expect(action.tile).toBe(window.tile)
           expect(action.seat).not.toBe(window.seat)
           if (action.type === 'chi') {
             expect(action.seat).toBe((window.seat + 1) % SEAT_COUNT)
           }
         }
+        // Win offers precede call offers: every ron sits before every claim.
+        const tail = offered.slice(1).map((a) => a.type)
+        const firstClaim = tail.findIndex((t) => t !== 'ron')
+        if (firstClaim !== -1) expect(tail.slice(firstClaim)).not.toContain('ron')
       }),
     )
   })
 
-  it('pon and daiminkan offers all precede every chi offer (property)', () => {
+  it('pon and daiminkan offers all precede every chi offer; any rons lead the block (property)', () => {
     fc.assert(
       fc.property(seedArb, fc.integer({ min: 1, max: FULL_TURNS - 1 }), (seed, turns) => {
         const offered = legalActions(foldRecord(tsumogiriRecord(seed, turns)))
@@ -319,14 +330,17 @@ describe('the set is the closed form', () => {
         for (let i = firstChi; i < offered.length; i++) {
           expect(offered[i].type).toBe('chi')
         }
-        // The pon block precedes the daiminkan block inside the pon/kan prefix.
+        // Between the draw and the first chi: rons (if any), then the pon block,
+        // then the daiminkan block.
         const types = offered.slice(1, firstChi).map((a) => a.type)
-        expect(types).toEqual([...types].sort((a, b) => (a === b ? 0 : a === 'pon' ? -1 : 1)))
+        const claims = types.filter((t) => t !== 'ron')
+        expect(types).toEqual([...types.filter((t) => t === 'ron'), ...claims])
+        expect(claims).toEqual([...claims].sort((a, b) => (a === b ? 0 : a === 'pon' ? -1 : 1)))
       }),
     )
   })
 
-  it('post-draw: the 14 discards lead — hand order, drawn last; any tail is the turn seat’s kans (property)', () => {
+  it('post-draw: the 14 discards lead — hand order, drawn last; any tail is the turn seat’s tsumo then kans (property)', () => {
     fc.assert(
       fc.property(seedArb, fc.integer({ min: 0, max: FULL_TURNS - 1 }), (seed, turns) => {
         const { actions } = tsumogiriRecord(seed, turns)
@@ -339,8 +353,13 @@ describe('the set is the closed form', () => {
         ]
         expect(offered.slice(0, discards.length)).toEqual(discards)
         expect(new Set(offered.map(keyOf)).size).toBe(offered.length)
-        for (const action of offered.slice(discards.length)) {
-          expect(['ankan', 'shouminkan']).toContain(action.type)
+        const tail = offered.slice(discards.length)
+        // At most one tsumo, and only at the head of the tail — the win precedes
+        // the kans, mirroring ron-before-pon in the window class.
+        for (const [i, action] of tail.entries()) {
+          expect(i === 0 ? ['tsumo', 'ankan', 'shouminkan'] : ['ankan', 'shouminkan']).toContain(
+            action.type,
+          )
           expect(action.seat).toBe(state.turn)
         }
       }),
@@ -361,18 +380,29 @@ describe('the set is the closed form', () => {
   })
 })
 
-describe('ended hand offers nothing', () => {
-  it('a ryuukyoku fold returns no legal actions (property)', () => {
+describe('ended hand offers nothing but the houtei rons', () => {
+  // Since T-005-02-02, 'ryuukyoku' — provisionally ended — offers exactly the
+  // houtei rons on the reconstructed final discard (the fold's ryuukyoku→agari
+  // carve-out); for almost every seed that set is empty. 'agari' offers nothing,
+  // ever (covered at the win anchors in legal.win.test.ts).
+
+  it('a ryuukyoku fold offers only houtei rons on the final discard — usually none (property)', () => {
     fc.assert(
       fc.property(seedArb, (seed) => {
         const state = foldRecord(maximalRecord(seed))
         expect(state.phase).toBe('ryuukyoku')
-        expect(legalActions(state)).toEqual([])
+        const finalDiscard = state.ponds[state.turn][state.ponds[state.turn].length - 1]
+        for (const offer of legalActions(state)) {
+          expect(offer.type).toBe('ron')
+          if (offer.type !== 'ron') return
+          expect(offer.tile).toBe(finalDiscard)
+          expect(offer.seat).not.toBe(state.turn)
+        }
       }),
     )
   })
 
-  it('a kan-shortened ryuukyoku offers nothing either', () => {
+  it('a kan-shortened ryuukyoku offers nothing either (no seat wins seed 280’s final discard)', () => {
     const state = foldRecord(kanMaximalRecord280())
     expect(state.phase).toBe('ryuukyoku')
     expect(legalActions(state)).toEqual([])

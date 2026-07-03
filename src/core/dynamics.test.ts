@@ -61,9 +61,19 @@ const ACTION_BOUND = 2 * FULL_TURNS + 2 * MAX_MELDS + 2
  */
 const CHOICE_MAX = 19
 
-/** The call vocabulary — every action form that is not a draw or a discard. */
+/** The call vocabulary — chi/pon/kan forms; wins are ends, not calls. */
 function isCall(action: HandAction): boolean {
-  return action.type !== 'draw' && action.type !== 'discard'
+  return (
+    action.type !== 'draw' &&
+    action.type !== 'discard' &&
+    action.type !== 'tsumo' &&
+    action.type !== 'ron'
+  )
+}
+
+/** A win offer — the endings T-005-02-02 made offerable; drivers filter by intent. */
+function isWin(action: HandAction): boolean {
+  return action.type === 'tsumo' || action.type === 'ron'
 }
 
 /**
@@ -103,13 +113,18 @@ function playRecord(seed: number, choices: readonly number[]): HandRecord {
  * seeded rng stream, so the corpus is reproducible arithmetic, not fc sampling.
  * Greed maximizes call density (any concealed quad kans immediately, any pon
  * upgrades the moment its fourth copy surfaces), which is what makes the corpus's
- * every-call-form coverage assertable rather than statistical. Runs to ryuukyoku.
+ * every-call-form coverage assertable rather than statistical. Runs to ryuukyoku BY
+ * CONSTRUCTION: win offers (tsumo/ron, offerable since T-005-02-02) are filtered
+ * out up front — an eager win would truncate games and starve the call coverage
+ * this corpus exists to guarantee. Wins in random trajectories are playRecord's
+ * business. A non-win offer always remains while playing (the draw or a discard),
+ * so the filter can empty the set only at a houtei-offering ryuukyoku — the end.
  */
 function playGreedy(seed: number): HandRecord {
   const rng = createRng(seed)
   const actions: HandAction[] = []
   for (;;) {
-    const legal = legalActions(foldRecord({ seed, actions }))
+    const legal = legalActions(foldRecord({ seed, actions })).filter((a) => !isWin(a))
     if (legal.length === 0) return { seed, actions }
     const kans = legal.filter(
       (a) => a.type === 'daiminkan' || a.type === 'ankan' || a.type === 'shouminkan',
@@ -187,18 +202,22 @@ function countTypes(actions: readonly HandAction[]): Record<HandAction['type'], 
  * The end-of-game identities — exact equalities, so a generator that stops early or
  * a fold that loses a tile breaks an ===, keeping termination non-vacuous the way
  * the old exact-140 count did before kans made action counts trajectory-dependent:
- * draws + kans === FULL_TURNS (each consumed one live tile — the kan-eats-the-wall
- * fact); discards === draws + daiminkans + chi/pons — every drawn tile and every
+ * draws + kans === FULL_TURNS − live remaining (each consumed one live tile — the
+ * kan-eats-the-wall fact; a ryuukyoku end leaves zero live, an agari may end the
+ * hand mid-wall); discards === draws + daiminkans + chi/pons − the one obligation a
+ * tsumo leaves unmet (the winner keeps its drawn tile) — every drawn tile and every
  * claim obliges one discard, EXCEPT that an ankan/shouminkan absorbs the drawn tile
  * of the draw before it (its rinshan re-fills the slot), so closed-kan forms add no
  * obligation of their own while daiminkan (folding instead of a draw) does; melds
- * count chi+pon+daiminkan+ankan (a shouminkan replaces its pon in place).
+ * count chi+pon+daiminkan+ankan (a shouminkan replaces its pon in place). For a
+ * ryuukyoku end every term reduces to the pre-win identity, exactly.
  */
 function expectEndIdentities(record: HandRecord, state: TableState): void {
   const n = countTypes(record.actions)
   const kans = n.daiminkan + n.ankan + n.shouminkan
-  expect(n.draw + kans).toBe(FULL_TURNS)
-  expect(n.discard).toBe(n.draw + n.daiminkan + n.chi + n.pon)
+  expect(n.draw + kans).toBe(FULL_TURNS - state.live.length)
+  const unmet = state.win?.by === 'tsumo' ? 1 : 0
+  expect(n.discard).toBe(n.draw + n.daiminkan + n.chi + n.pon - unmet)
   expect(state.ponds.flat().length).toBe(n.discard)
   expect(state.melds.flat().length).toBe(n.chi + n.pon + n.daiminkan + n.ankan)
 }
@@ -261,13 +280,28 @@ describe('conservation over random play', () => {
 })
 
 describe('termination', () => {
-  it('every randomly driven full game ends in ryuukyoku with the closed end shape (property)', () => {
+  it('every randomly driven full game ends in ryuukyoku or agari with the matching closed end shape (property)', () => {
+    // Since T-005-02-02 the random driver's trajectory space includes the win
+    // offers, so a full game ends either way; playRecord stops only when the
+    // offered set empties, so a lone houtei ron is auto-taken into agari and a
+    // final ryuukyoku is houtei-less — both ends offer nothing.
     fc.assert(
       fc.property(fullGameArb, (record) => {
         const state = foldRecord(record)
-        expect(state.phase).toBe('ryuukyoku')
-        expect(state.live).toEqual([])
-        expect(state.drawn).toBeNull()
+        if (state.phase === 'agari') {
+          expect(state.win).not.toBeNull()
+          if (state.win!.by === 'tsumo') {
+            expect(state.drawn).toBe(state.win!.tile)
+          } else {
+            expect(state.drawn).toBeNull()
+            expect(state.ponds[state.win!.from].at(-1)).toBe(state.win!.tile)
+          }
+          expect(state.turn).toBe(state.win!.winner)
+        } else {
+          expect(state.phase).toBe('ryuukyoku')
+          expect(state.live).toEqual([])
+          expect(state.drawn).toBeNull()
+        }
         expect(state.mustDiscard).toBe(false)
         expect(state.claimable).toBeNull()
         expect(state.dead.length).toBe(DEAD_WALL_SIZE)
