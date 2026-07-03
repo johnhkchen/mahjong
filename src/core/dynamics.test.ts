@@ -258,21 +258,27 @@ function countTypes(actions: readonly HandAction[]): Record<HandAction['type'], 
  * the old exact-140 count did before kans made action counts trajectory-dependent:
  * draws + kans === FULL_TURNS − live remaining (each consumed one live tile — the
  * kan-eats-the-wall fact; a ryuukyoku end leaves zero live, an agari may end the
- * hand mid-wall); discards === draws + daiminkans + chi/pons − the one obligation a
- * tsumo leaves unmet (the winner keeps its drawn tile) — every drawn tile and every
- * claim obliges one discard, EXCEPT that an ankan/shouminkan absorbs the drawn tile
- * of the draw before it (its rinshan re-fills the slot), so closed-kan forms add no
- * obligation of their own while daiminkan (folding instead of a draw) does; melds
- * count chi+pon+daiminkan+ankan (a shouminkan replaces its pon in place). For a
- * ryuukyoku end every term reduces to the pre-win identity, exactly.
+ * hand mid-wall); discards-performed === draws + daiminkans + chi/pons − the one
+ * obligation a tsumo leaves unmet (the winner keeps its drawn tile) — every drawn
+ * tile and every claim obliges one discard, EXCEPT that an ankan/shouminkan absorbs
+ * the drawn tile of the draw before it (its rinshan re-fills the slot), so
+ * closed-kan forms add no obligation of their own while daiminkan (folding instead
+ * of a draw) does; melds count chi+pon+daiminkan+ankan (a shouminkan replaces its
+ * pon in place). For a ryuukyoku end every term reduces to the pre-win identity,
+ * exactly. "Discards-performed" is `n.discard + n.riichi` (T-009-01-01): a riichi
+ * action folds an ordinary discard too (HandAction's own doc-comment — declare and
+ * discard, one atomic motion), tallied under its own type by countTypes, so it
+ * resolves exactly one discard obligation and lands one tile in a pond just like
+ * an ordinary discard does.
  */
 function expectEndIdentities(record: HandRecord, state: TableState): void {
   const n = countTypes(record.actions)
   const kans = n.daiminkan + n.ankan + n.shouminkan
   expect(n.draw + kans).toBe(FULL_TURNS - state.live.length)
   const unmet = state.win?.by === 'tsumo' ? 1 : 0
-  expect(n.discard).toBe(n.draw + n.daiminkan + n.chi + n.pon - unmet)
-  expect(state.ponds.flat().length).toBe(n.discard)
+  const discardsPerformed = n.discard + n.riichi
+  expect(discardsPerformed).toBe(n.draw + n.daiminkan + n.chi + n.pon - unmet)
+  expect(state.ponds.flat().length).toBe(discardsPerformed)
   expect(state.melds.flat().length).toBe(n.chi + n.pon + n.daiminkan + n.ankan)
 }
 

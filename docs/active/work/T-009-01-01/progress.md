@@ -19,16 +19,30 @@ Tracking plan.md's 8 steps. Updated as each completes.
 - [x] Step 6 — game.ts: thread scoresIn/potIn/pot
 - [x] Step 7 — seatview.ts: expose riichi/pot (also required widening
   policy.test.ts's hand-built `viewOf` SeatView fixture helper)
-- [x] Step 8 — full-suite confirmation pass. Found one real, non-flaky-by-luck
-  regression on the first `just test` re-run (fast-check property tests use an
-  unseeded random draw per run, so this wasn't caught by earlier per-step runs):
-  `legal.test.ts`'s "post-draw: the 14 discards lead..." property asserted the
-  tail after the 14 discards is "the turn seat's tsumo, then kans" — no longer
-  true, since riichi offers can now sit in that tail too. Fixed by teaching the
-  assertion to skip a leading riichi block before checking tsumo/kan order.
-  Re-ran the full suite and the isolated property 8x after the fix with no
-  further failures. Every non-riichi suite (selfplay/dynamics/policy/purity) is
-  confirmed unmodified in behavior — only riichi-touching code changed.
+- [x] Step 8 — full-suite confirmation pass. Found TWO real regressions, both
+  fixed and committed:
+  1. `legal.test.ts`'s "post-draw: the 14 discards lead..." property assumed
+     the tail after the 14 discards is "the turn seat's tsumo, then kans" — no
+     longer true, since riichi offers can sit in that tail too. Fixed by
+     skipping a leading riichi block before checking tsumo/kan order.
+  2. `dynamics.test.ts`'s `expectEndIdentities` (the end-of-game action-count
+     identities) didn't account for a riichi action also performing a discard
+     — `n.discard` alone under-counted "discards performed" by the number of
+     riichi declarations whenever `playRecord`'s uniform-by-index sampling
+     happened to pick one, breaking both the discard-count identity and the
+     pond-length identity. Fixed with a `discardsPerformed = n.discard +
+     n.riichi` term.
+  - **A third thread (T-009-01-03, temporary/riichi furiten) started actively
+    editing `record.ts`/`legal.ts`/`yaku.ts` in the SAME working directory
+    partway through this step**, per Lisa's documented multi-thread-one-branch
+    concurrency model. This caused several `just test` runs against the shared
+    working tree to fail transiently (their in-progress furiten work changes
+    which rons are offered, invalidating `WIN_CARRIER_SEEDS` and some greedy/
+    win-eager corpus trajectories — THEIR re-mining to do, not this ticket's).
+    Verified this ticket's own work is unaffected and fully correct by
+    checking out commit `8ab6e1b` into an isolated `git worktree` (untouched by
+    the concurrent thread) and running the full suite there: **830/830 pass
+    cleanly**. No stash/reset was left applied to the shared working tree.
 
 ## Deviations from plan.md
 
