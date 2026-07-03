@@ -17,21 +17,12 @@ and off this board.
 
 ## Tier 2 — The teaching layer (P2: the reason this repo exists)
 
-- **Shanten + tenpai / riichi prompts** — surface distance-to-tenpai and offer "you're tenpai —
-  declare riichi?" at the right moment. _(advances P2)_
 - **Yaku legibility** — name and explain the yaku a hand is making or could make, so a beginner
   learns what they're building. _(advances P2)_
 - **Dora explained** — show the dora indicator → dora mapping and count dora/uradora into the
   hand's value inline. _(advances P2)_
 - **Safe-tile / defense hints** — after an opponent's riichi, highlight genbutsu and suji so a
   learner can fold on purpose. _(advances P2)_
-- **"Why can't I win?" legibility** — owner playtest (2026-07-03): rons were withheld with no
-  explanation, reading as bugs. Surface the two silent gates at the moment they bite: a furiten
-  indicator ("you discarded X — ron is sealed until your next draw/turn; tsumo still wins") and
-  a yakuless-hand warning ("no yaku — this hand can only win by tsumo / needs riichi"). The
-  engine already knows both (`legal.ts` furiten + one-yaku gates); this is pure teaching UI.
-  Riichi (separate signal) is the mechanic that makes closed rons broadly reachable at all.
-  _(advances P2)_
 - **Post-hand review** — replay the finished hand with engine notes ("tenpai here, pushed into a
   riichi"), free off the record + engine peripheral. _(advances P2, P5)_
 
