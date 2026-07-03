@@ -200,7 +200,7 @@ describe('mined anchors — the composed behavior frozen for named seeds', () =>
   // win facts are read from the FOLD of the produced record (the double-key: the
   // literal freezes arbitration drift, the fold guarantees the facts are the
   // record's own derivation, so a wrong mine cannot freeze a wrong behavior).
-  it('seed 25 — a menzen-tsumo agari', () => {
+  it('seed 25 — a menzen-tsumo agari (now composed with riichi, T-009-02-02 repair)', () => {
     const { record, endPhase } = selfPlay(25)
     expect(record.actions).toHaveLength(36)
     expect(endPhase).toBe('agari')
@@ -208,7 +208,7 @@ describe('mined anchors — the composed behavior frozen for named seeds', () =>
     expect(win.by).toBe('tsumo')
     expect(win.winner).toBe(1)
     expect(kindOf(win.tile)).toBe('5p')
-    expect(win.yaku).toEqual(['menzen-tsumo'])
+    expect(win.yaku).toEqual(['menzen-tsumo', 'riichi'])
   })
 
   it('seed 9 — a window ron off another bot, through folded claims', () => {
@@ -224,13 +224,19 @@ describe('mined anchors — the composed behavior frozen for named seeds', () =>
     expect(win.yaku).toEqual(['yakuhai-haku'])
   })
 
-  it('seed 13 — a houtei ron folded OUT of ryuukyoku (the ended→ended transition)', () => {
-    const { record, endPhase } = selfPlay(13)
-    expect(record.actions).toHaveLength(141)
+  // Re-mined (T-009-02-02 repair): seed 13 no longer reaches houtei under riichi-eager
+  // bots — a normal ron ends the hand long before the wall empties (win.yaku ['riichi']
+  // only, record length 107 vs the old 141). Seed 356, scanned fresh out to the full
+  // corpus range, still produces the same "ron pulled out of what would be ryuukyoku"
+  // shape this anchor exists to pin — re-anchored there instead of weakening the check.
+  it('seed 356 — a houtei ron folded OUT of ryuukyoku (the ended→ended transition)', () => {
+    const { record, endPhase } = selfPlay(356)
+    expect(record.actions).toHaveLength(147)
     expect(endPhase).toBe('agari')
     const win = foldRecord(record).win!
     expect(win.by).toBe('ron')
     expect(win.winner).toBe(0)
+    if (win.by === 'ron') expect(win.from).toBe(2)
     expect(win.yaku).toEqual(['houtei'])
   })
 

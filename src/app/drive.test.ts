@@ -1069,7 +1069,9 @@ describe('wins driven through the seam', () => {
     expect(actions).toHaveLength(73)
     const won = foldRecord({ seed: HOUTEI_SEED, actions })
     expect(won.phase).toBe('agari')
-    expect(won.win).toEqual({ by: 'ron', winner: 2, from: PLAYER, tile: 17, yaku: ['ittsuu'] })
+    // Re-mined (T-009-02-02 repair): West is now in riichi at the win — same
+    // walk/winner/tile, yaku gains 'riichi' alongside 'ittsuu'.
+    expect(won.win).toEqual({ by: 'ron', winner: 2, from: PLAYER, tile: 17, yaku: ['riichi', 'ittsuu'] })
     expect(legalActions(won)).toEqual([])
   })
 

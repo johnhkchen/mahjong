@@ -458,14 +458,23 @@ function endedStateOf(seed: number): TableState {
 
 describe('settlementOf — zero-sum conservation over random ended hands', () => {
   it(
-    'every random seed folds to an ended TableState whose four deltas sum to zero',
+    'every random seed folds to an ended TableState whose deltas plus the unclaimed pot sum to zero',
     { timeout: 60_000 },
     () => {
       fc.assert(
         fc.property(fc.integer({ min: 0, max: 0xffffffff }), (seed) => {
           const state = endedStateOf(seed)
           const deltas = settlementOf(state)
-          expect(deltas.reduce((sum, delta) => sum + delta, 0)).toBe(0)
+          // T-009-02-02 repair: settlement.ts's own header documents the corrected
+          // law once riichi sticks exist — an agari's deltas already absorb the
+          // whole running pot (state.pot, via withRiichiSettlement), so they sum
+          // to the incoming potIn (0 here, endedStateOf folds with no RiichiContext).
+          // A ryuukyoku distributes nothing further: its deltas sum to -state.pot,
+          // the sticks that left seats' scores and now sit unclaimed. Either way,
+          // deltas summed plus whatever pot is still unclaimed at the end (0 for
+          // agari, state.pot for ryuukyoku) equals potIn — zero for this property.
+          const unclaimedPot = state.phase === 'agari' ? 0 : state.pot
+          expect(deltas.reduce((sum, delta) => sum + delta, 0) + unclaimedPot).toBe(0)
         }),
         { numRuns: 50 },
       )
