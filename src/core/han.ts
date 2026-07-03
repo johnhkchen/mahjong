@@ -34,6 +34,9 @@ function isMenzen(melds: readonly Meld[]): boolean {
  */
 const YAKU_HAN: Readonly<Record<YakuName, { closed: number; open: number }>> = {
   'menzen-tsumo': { closed: 1, open: 1 },
+  riichi: { closed: 1, open: 1 },
+  'double-riichi': { closed: 2, open: 2 },
+  ippatsu: { closed: 1, open: 1 },
   pinfu: { closed: 1, open: 1 },
   tanyao: { closed: 1, open: 1 },
   iipeikou: { closed: 1, open: 1 },

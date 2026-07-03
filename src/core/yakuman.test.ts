@@ -100,6 +100,8 @@ function winOf(spec: string, overrides: WinOverrides = {}): Win {
     lastTile: overrides.lastTile ?? false,
     seatWind: overrides.seatWind ?? '1z',
     roundWind: overrides.roundWind ?? '1z',
+    riichi: 'none',
+    ippatsu: false,
   }
 }
 
@@ -276,6 +278,8 @@ describe('yakuOf contract', () => {
       lastTile: false,
       seatWind: '1z',
       roundWind: '1z',
+      riichi: 'none',
+      ippatsu: false,
     }
     expect(() => yakuOf(win)).toThrow(RangeError)
   })

@@ -74,6 +74,8 @@ function ronGates(
     lastTile: state.live.length === 0,
     seatWind: windOf(seat),
     roundWind: '1z',
+    riichi: 'none',
+    ippatsu: false,
   })
   return { completes, furiten, yakuless: yaku.length === 0 }
 }
@@ -93,6 +95,8 @@ function tsumoGates(state: TableState): { completes: boolean; yakuless: boolean 
     lastTile: state.live.length === 0,
     seatWind: windOf(seat),
     roundWind: '1z',
+    riichi: 'none',
+    ippatsu: false,
   })
   return { completes, yakuless: yaku.length === 0 }
 }

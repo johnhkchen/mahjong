@@ -7,9 +7,12 @@
 // one-yaku win gate — is T-005-01-04's aggregator, layered on top of this module.
 // The tsumo/ron fold (T-005-02-01) assembles WinContexts; legality (T-005-02-02)
 // and the hand-end teaching screen consume the names. The riichi family (riichi,
-// double riichi, ippatsu) is deliberately absent: no riichi declaration exists in
-// the action vocabulary yet, and YakuName widens extend-only when it does (the
-// HandAction precedent). Dora is not a yaku; yakuman forms are -04's.
+// double riichi, ippatsu — T-009-01-02) is present: three circumstance-only
+// predicates, same shape as menzenTsumo/haitei/houtei/rinshan/chankan below — none
+// of them read the decomposition, only WinContext.riichi/ippatsu, which the fold
+// (record.ts) and its independent restatements (settlement.ts's winOf, legal.ts's
+// winYaku) populate from TableState.doubleRiichi/ippatsu. Dora and ura-dora are
+// never yaku (han.ts's own header); yakuman forms are -04's.
 
 import {
   TILE_KINDS,
@@ -34,6 +37,9 @@ import type { Meld } from './record'
  */
 export type YakuName =
   | 'menzen-tsumo'
+  | 'riichi'
+  | 'double-riichi'
+  | 'ippatsu'
   | 'pinfu'
   | 'tanyao'
   | 'iipeikou'
@@ -69,6 +75,9 @@ export type YakuName =
  */
 export const STANDARD_YAKU_NAMES: readonly YakuName[] = Object.freeze([
   'menzen-tsumo',
+  'riichi',
+  'double-riichi',
+  'ippatsu',
   'pinfu',
   'tanyao',
   'iipeikou',
@@ -107,6 +116,18 @@ export const STANDARD_YAKU_NAMES: readonly YakuName[] = Object.freeze([
 export type WindKind = '1z' | '2z' | '3z' | '4z'
 
 /**
+ * The winner's riichi status at the moment of the win — 'none' unless the winner
+ * had already declared this hand. 'riichi' and 'double' are mutually exclusive by
+ * construction (a double riichi is never ALSO priced as a plain riichi, the
+ * iipeikou/ryanpeikou disjoint-predicate precedent) — callers assign exactly one
+ * of the three, never derive both flags independently (record.ts's
+ * TableState.doubleRiichi implies TableState.riichi, and the caller-side mapping
+ * — record.ts's applyWinTail, settlement.ts's winOf, legal.ts's winYaku, each an
+ * independent restatement — reads that implication, not two free booleans).
+ */
+export type RiichiStatus = 'none' | 'riichi' | 'double'
+
+/**
  * Everything one yaku evaluation reads: ONE reading of the win plus the
  * circumstances no tile multiset can encode. The fold (or any other caller)
  * assembles one WinContext per decomposition returned by decomposeAgari;
@@ -134,6 +155,15 @@ export interface WinContext {
   readonly seatWind: WindKind
   /** The round wind — caller-supplied; no match state exists in the engine. */
   readonly roundWind: WindKind
+  /** The winner's riichi status at the win (T-009-01-02) — see RiichiStatus. */
+  readonly riichi: RiichiStatus
+  /**
+   * True while the winner's riichi ippatsu window is still open at the win
+   * (T-009-01-02): declared, and no call has folded anywhere and no further
+   * discard of the winner's own has folded since. Meaningless (and always false
+   * from a real fold) when `riichi` is 'none'.
+   */
+  readonly ippatsu: boolean
 }
 
 /** Wall and rinshan draws are self-draws; discard and chankan takes are ron. */
@@ -235,6 +265,24 @@ function numberedSuitsOf(kinds: readonly TileKind[]): Set<NumberedSuit> {
 /** Menzen tsumo: a self-draw on a closed hand. Ankan keeps the hand closed. */
 function menzenTsumo(ctx: WinContext): boolean {
   return isTsumo(ctx) && isMenzen(ctx.melds)
+}
+
+/**
+ * Riichi: declared this hand, and NOT a double riichi (doubleRiichiYaku
+ * supersedes — the disjoint-by-construction pair, RiichiStatus's own contract).
+ */
+function riichiYaku(ctx: WinContext): boolean {
+  return ctx.riichi === 'riichi'
+}
+
+/** Double riichi: declared on the seat's first, uninterrupted discard. */
+function doubleRiichiYaku(ctx: WinContext): boolean {
+  return ctx.riichi === 'double'
+}
+
+/** Ippatsu: won within one uninterrupted go-around of a riichi declaration. */
+function ippatsuYaku(ctx: WinContext): boolean {
+  return ctx.ippatsu
 }
 
 /**
@@ -528,6 +576,9 @@ function shousangen(ctx: WinContext): boolean {
  */
 const STANDARD_YAKU: readonly { name: YakuName; test: (ctx: WinContext) => boolean }[] = [
   { name: 'menzen-tsumo', test: menzenTsumo },
+  { name: 'riichi', test: riichiYaku },
+  { name: 'double-riichi', test: doubleRiichiYaku },
+  { name: 'ippatsu', test: ippatsuYaku },
   { name: 'pinfu', test: pinfu },
   { name: 'tanyao', test: tanyao },
   { name: 'iipeikou', test: iipeikou },

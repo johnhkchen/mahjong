@@ -196,6 +196,10 @@ function winOf(state: TableState): Win {
     lastTile: state.live.length === 0,
     seatWind: windKindOf(winner),
     roundWind: ROUND_WIND,
+    // T-009-01-02: inert placeholder — commit 4 replaces with TableState.riichi/
+    // doubleRiichi/ippatsu-derived values for `winner`.
+    riichi: 'none',
+    ippatsu: false,
   }
 }
 
@@ -268,6 +272,8 @@ function pricedReadingCandidatesOf(win: Win, doraHan: number): PricedReading[] {
       lastTile: win.lastTile,
       seatWind: win.seatWind,
       roundWind: win.roundWind,
+      riichi: win.riichi,
+      ippatsu: win.ippatsu,
     }
     const names = readingYakuOf(ctx)
     if (names.length === 0) continue

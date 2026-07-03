@@ -81,6 +81,8 @@ function ctxOf(spec: string, overrides: CtxOverrides = {}): WinContext {
     lastTile: false,
     seatWind: overrides.seatWind ?? '3z',
     roundWind: overrides.roundWind ?? '4z',
+    riichi: 'none',
+    ippatsu: false,
   }
 }
 

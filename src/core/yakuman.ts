@@ -26,6 +26,7 @@ import type { Meld } from './record'
 import {
   STANDARD_YAKU_NAMES,
   standardYakuOf,
+  type RiichiStatus,
   type WinContext,
   type WindKind,
   type YakuName,
@@ -91,6 +92,10 @@ export interface Win {
   readonly seatWind: WindKind
   /** The round wind — caller-supplied; no match state exists in the engine. */
   readonly roundWind: WindKind
+  /** The winner's riichi status at the win (T-009-01-02) — see WinContext.riichi. */
+  readonly riichi: RiichiStatus
+  /** The winner's ippatsu window, still open at the win (T-009-01-02). */
+  readonly ippatsu: boolean
 }
 
 /**
@@ -274,6 +279,8 @@ export function yakuOf(win: Win): WinYakuName[] {
       lastTile: win.lastTile,
       seatWind: win.seatWind,
       roundWind: win.roundWind,
+      riichi: win.riichi,
+      ippatsu: win.ippatsu,
     }
     for (const name of standardYakuOf(ctx)) union.add(name)
   }

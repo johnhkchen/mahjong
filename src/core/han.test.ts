@@ -75,6 +75,8 @@ function winOf(spec: string, overrides: WinOverrides = {}): Win {
     lastTile: overrides.lastTile ?? false,
     seatWind: overrides.seatWind ?? '1z',
     roundWind: overrides.roundWind ?? '1z',
+    riichi: 'none',
+    ippatsu: false,
   }
 }
 
@@ -92,6 +94,9 @@ describe('hanOf — the standard yaku table', () => {
   // exercised below.
   const EXPECTED: Record<YakuName, { closed: number; open: number }> = {
     'menzen-tsumo': { closed: 1, open: 1 },
+    riichi: { closed: 1, open: 1 },
+    'double-riichi': { closed: 2, open: 2 },
+    ippatsu: { closed: 1, open: 1 },
     pinfu: { closed: 1, open: 1 },
     tanyao: { closed: 1, open: 1 },
     iipeikou: { closed: 1, open: 1 },

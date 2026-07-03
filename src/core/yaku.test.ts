@@ -93,6 +93,8 @@ interface CtxOverrides {
   lastTile?: boolean
   seatWind?: WinContext['seatWind']
   roundWind?: WinContext['roundWind']
+  riichi?: WinContext['riichi']
+  ippatsu?: boolean
   pick?: (decomposition: AgariDecomposition) => boolean
 }
 
@@ -113,6 +115,8 @@ function ctxOf(spec: string, overrides: CtxOverrides = {}): WinContext {
     lastTile: overrides.lastTile ?? false,
     seatWind: overrides.seatWind ?? '1z',
     roundWind: overrides.roundWind ?? '1z',
+    riichi: overrides.riichi ?? 'none',
+    ippatsu: overrides.ippatsu ?? false,
   }
 }
 
@@ -133,6 +137,25 @@ const CASES: Record<YakuName, YakuCase> = {
   'menzen-tsumo': {
     positive: ctxOf('123m456m789m234p55s', { source: 'wall' }),
     negative: ctxOf('123m456m234p55s', { melds: [chi('7m')], source: 'wall' }),
+  },
+  // Declared, not double; the negative is the same win with no riichi at all.
+  riichi: {
+    positive: ctxOf('123m456m789m234p55s', { riichi: 'riichi' }),
+    negative: ctxOf('123m456m789m234p55s', { riichi: 'none' }),
+  },
+  // Declared on the first, uninterrupted discard; the negative is an ordinary
+  // (non-double) riichi on the SAME hand — 'riichi' and 'double' are exclusive
+  // by RiichiStatus's own contract, so a 'riichi' context must fail this yaku.
+  'double-riichi': {
+    positive: ctxOf('123m456m789m234p55s', { riichi: 'double' }),
+    negative: ctxOf('123m456m789m234p55s', { riichi: 'riichi' }),
+  },
+  // Won within one uninterrupted go-around of the declaration; the negative is
+  // the same riichi win after the window closed (a call, or the seat's own next
+  // discard, folded first).
+  ippatsu: {
+    positive: ctxOf('123m456m789m234p55s', { riichi: 'riichi', ippatsu: true }),
+    negative: ctxOf('123m456m789m234p55s', { riichi: 'riichi', ippatsu: false }),
   },
   // All runs, non-yakuhai pair, won on 4s = the low end of 456s (ryanmen);
   // the negative wins the SAME hand on 4p, the middle of 345p (kanchan).
@@ -278,8 +301,8 @@ const CASES: Record<YakuName, YakuCase> = {
 describe('standardYakuOf per-yaku cases', () => {
   it('the case table covers the catalog exactly', () => {
     expect(Object.keys(CASES).sort()).toEqual([...STANDARD_YAKU_NAMES].sort())
-    expect(STANDARD_YAKU_NAMES).toHaveLength(27)
-    expect(new Set(STANDARD_YAKU_NAMES).size).toBe(27)
+    expect(STANDARD_YAKU_NAMES).toHaveLength(30)
+    expect(new Set(STANDARD_YAKU_NAMES).size).toBe(30)
     expect(Object.isFrozen(STANDARD_YAKU_NAMES)).toBe(true)
   })
 
@@ -320,6 +343,17 @@ describe('standardYakuOf meld builders sanity', () => {
 // ---------------------------------------------------------------------------
 
 describe('standardYakuOf interactions', () => {
+  it('ippatsu reads only ctx.ippatsu — riichi status never gates it directly', () => {
+    // A real fold never produces riichi:'none' with ippatsu:true (record.ts only
+    // ever sets ippatsu true alongside a declaration), but the predicate itself
+    // is a one-liner reading ctx.ippatsu — this pins that it does not ALSO
+    // require ctx.riichi !== 'none', matching design.md's stated one-liner.
+    const names = standardYakuOf(
+      ctxOf('123m456m789m234p55s', { riichi: 'none', ippatsu: true }),
+    )
+    expect(names).toContain('ippatsu')
+  })
+
   it('ryanpeikou supersedes iipeikou — never both', () => {
     const names = standardYakuOf(
       ctxOf('223344m556677p88s', { pick: (d) => d.form === 'standard' }),

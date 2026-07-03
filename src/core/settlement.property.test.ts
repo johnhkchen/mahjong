@@ -527,6 +527,8 @@ function buildCtxSample(params: {
     lastTile: false,
     seatWind: '3z',
     roundWind: '4z',
+    riichi: 'none',
+    ippatsu: false,
   }
   return { ctx }
 }
@@ -617,6 +619,8 @@ describe('fuOf — fu invariants over constructed winning hands', () => {
             lastTile: false,
             seatWind: '3z',
             roundWind: '4z',
+            riichi: 'none',
+            ippatsu: false,
           }
           return standardYakuOf(ctx).includes('pinfu')
         })
@@ -630,6 +634,8 @@ describe('fuOf — fu invariants over constructed winning hands', () => {
           lastTile: false,
           seatWind: '3z',
           roundWind: '4z',
+          riichi: 'none',
+          ippatsu: false,
         }
         expect(fuOf(ctx)).toBe(tsumo ? 20 : 30)
       }),
@@ -673,6 +679,8 @@ describe('fuOf — fu invariants over constructed winning hands', () => {
           lastTile: false,
           seatWind: '3z',
           roundWind: '4z',
+          riichi: 'none',
+          ippatsu: false,
         }
         expect(fuOf(ctx)).toBe(25)
       }),
@@ -743,6 +751,8 @@ function closedTsumoState(hand13: readonly TileId[], tile: TileId, doras: readon
     phase: 'agari',
     win: { by: 'tsumo', winner: 0, tile, yaku: [] },
     riichi: [false, false, false, false],
+    tempFuriten: [false, false, false, false],
+    riichiFuriten: [false, false, false, false],
     pot: 0,
     scoresIn: [25000, 25000, 25000, 25000],
   }
@@ -784,6 +794,8 @@ describe('dora is additive to price, never a gate', () => {
           lastTile: false,
           seatWind: '1z',
           roundWind: '1z',
+          riichi: 'none',
+          ippatsu: false,
         }
         expect(yakuOf(win).length).toBeGreaterThan(0)
 

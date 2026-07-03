@@ -15,13 +15,14 @@
 // inventing it.
 //
 // THE FURITEN DIVERGENCE — the one place the offered set is deliberately NARROWER
-// than what folds: a seat whose waits intersect its own pond (basic discard
-// furiten) is never OFFERED a ron, but the fold ACCEPTS one, because record.ts's
-// doctrine is that knowing who else could have won is legality's business, never
-// the step function's — and narrowing the fold now would invalidate stored logs it
-// accepted before. Everywhere else, offered ⇔ folds still holds exactly; the
-// win-offer agreement suite (legal.win.test.ts) pins the asymmetry from both sides.
-// Temporary and riichi furiten are the riichi ticket's extensions, not this rule.
+// than what folds: a seat gated by ANY of the three furiten kinds (basic discard
+// furiten below, or temporary/riichi furiten — TableState.tempFuriten/riichiFuriten,
+// fold-tracked by record.ts's sealPassedWins/T-009-01-03) is never OFFERED a ron, but
+// the fold ACCEPTS one regardless, because record.ts's doctrine is that knowing who
+// else could have won (or passed) is legality's business, never the step function's
+// — and narrowing the fold now would invalidate stored logs it accepted before.
+// Everywhere else, offered ⇔ folds still holds exactly; the win-offer agreement
+// suite (legal.win.test.ts) pins the asymmetry from both sides, for all three kinds.
 
 import { kindOf, rankOf, suitOf, type TileId, type TileKind } from './tiles'
 import { SEAT_COUNT, type Seat } from './deal'
@@ -93,6 +94,10 @@ function winYaku(
     lastTile: state.live.length === 0,
     seatWind: windKindOf(seat),
     roundWind: ROUND_WIND,
+    // T-009-01-02: inert placeholder — commit 3 replaces with TableState.riichi/
+    // doubleRiichi/ippatsu-derived values for `seat`.
+    riichi: 'none',
+    ippatsu: false,
   })
 }
 
@@ -102,7 +107,11 @@ function winYaku(
  * Meld contract), so the pond read is literal. Whole-seat gate: any wait in the
  * pond kills every ron offer for the seat, on every tile. Evaluated only for a
  * seat already known to complete the discard (the probe-first order in ronOffers),
- * because waits is a 34-kind scan and legalActions runs at every fold step.
+ * because waits is a 34-kind scan and legalActions runs at every fold step. The
+ * BASIC member of ronOffers' three-way furiten OR — see TableState.tempFuriten/
+ * riichiFuriten (T-009-01-03) for the other two, which this function does not cover
+ * (a passed win from another seat's discard, tracked by the fold, not recomputed
+ * here).
  */
 function discardFuriten(state: TableState, seat: Seat): boolean {
   const seatWaits = waits(state.hands[seat].map(kindOf), state.melds[seat])
@@ -116,9 +125,12 @@ function discardFuriten(state: TableState, seat: Seat): boolean {
  * multiple-ron tie can take the first offered ron. Shared by the open-window arm
  * and the ryuukyoku (houtei) arm; `discarder`/`tile` name the discard either way.
  * Gates, cheapest first: the tile completes the seat's hand (isAgari probe), the
- * seat is not furiten (see discardFuriten), and the completion carries at least
- * one yaku (winYaku, source 'discard' — in the houtei arm lastTile is true, so
- * 'houtei' itself satisfies the gate and only completion or furiten can exclude).
+ * seat is not furiten — basic (discardFuriten), temporary, or riichi
+ * (TableState.tempFuriten/riichiFuriten, T-009-01-03: a passed win, sealed by the
+ * fold, cleared for temp on the seat's next draw, never for riichi) — and the
+ * completion carries at least one yaku (winYaku, source 'discard' — in the houtei
+ * arm lastTile is true, so 'houtei' itself satisfies the gate and only completion
+ * or furiten can exclude).
  * All simultaneously legal rons are enumerated: exactly one may FOLD (the
  * multiple-ron convention — the recorder picks), but which one is the recorder's
  * choice to make, so legality states the whole choice set.
@@ -129,7 +141,9 @@ function ronOffers(state: TableState, discarder: Seat, tile: TileId): HandAction
   for (let k = 1; k < SEAT_COUNT; k++) {
     const seat = ((discarder + k) % SEAT_COUNT) as Seat
     if (!isAgari([...state.hands[seat].map(kindOf), kind], state.melds[seat])) continue
-    if (discardFuriten(state, seat)) continue
+    if (discardFuriten(state, seat) || state.tempFuriten[seat] || state.riichiFuriten[seat]) {
+      continue
+    }
     if (winYaku(state, seat, kind, 'discard').length === 0) continue
     offers.push({ type: 'ron', seat, tile })
   }
