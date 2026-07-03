@@ -168,7 +168,17 @@ function expectConserved(record: HandRecord): void {
 
 /** Tally a log by action type, for the termination identities. */
 function countTypes(actions: readonly HandAction[]): Record<HandAction['type'], number> {
-  const counts = { draw: 0, discard: 0, chi: 0, pon: 0, daiminkan: 0, ankan: 0, shouminkan: 0 }
+  const counts = {
+    draw: 0,
+    discard: 0,
+    chi: 0,
+    pon: 0,
+    daiminkan: 0,
+    ankan: 0,
+    shouminkan: 0,
+    tsumo: 0,
+    ron: 0,
+  }
   for (const action of actions) counts[action.type]++
   return counts
 }
@@ -351,6 +361,10 @@ function withSeat(action: HandAction, seat: Seat): HandAction {
       return { type: 'ankan', seat, uses: action.uses }
     case 'shouminkan':
       return { type: 'shouminkan', seat, tile: action.tile }
+    case 'tsumo':
+      return { type: 'tsumo', seat }
+    case 'ron':
+      return { type: 'ron', seat, tile: action.tile }
   }
 }
 

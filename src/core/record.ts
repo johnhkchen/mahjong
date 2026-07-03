@@ -8,7 +8,8 @@ import { kindOf, rankOf, suitOf, type TileId, type TileKind } from './tiles'
 import { buildWall, partitionWall } from './wall'
 import { doraKindOf } from './dora'
 import { dealHands, SEAT_COUNT, type Seat } from './deal'
-import type { WinYakuName } from './yakuman'
+import type { WindKind } from './yaku'
+import { yakuOf, type WinYakuName } from './yakuman'
 
 /**
  * The element type of the ordered action log — the engine's action vocabulary.
@@ -40,7 +41,25 @@ import type { WinYakuName } from './yakuman'
  *   draws and the kan-dora indicator it flips are NEVER recorded: both are the
  *   seed's wall-order authority, like `draw`'s tile. The rinshan draw is implicit in
  *   the kan action itself — no separate `draw` is logged, because no other action
- *   can legally intervene between a kan and its replacement draw.
+ *   can legally intervene between a kan and its replacement draw. Ron exists but
+ *   folds only against discards: `source: 'chankan'` (robbing this kan) stays
+ *   fold-unreachable until a ticket splits shouminkan into announce/complete steps.
+ * - The win forms end the hand. `tsumo` records NO tile — the winning tile IS the
+ *   drawn tile, the seed's wall-order authority, like `draw`. `ron` records the
+ *   claimed `tile` — derivable from the claim window, so the chi/pon redundancy
+ *   rule again: a ron naming a tile other than the fresh discard is corruption and
+ *   throws. Neither records winner, yaku, or any other derivation result: the fold
+ *   derives the whole win (see TableState.win), and logging results would be a
+ *   second authority that could disagree with the derivation.
+ * - THE MULTIPLE-RON CONVENTION: exactly one ron ends a hand. When two or three
+ *   seats could win the same discard, the RECORDER chooses the single winner
+ *   before logging (the app's driver picks by atamahane — seat rotation order
+ *   from the discarder); the fold accepts whichever single ron the log names,
+ *   because knowing who else could have won is legality's business (waits over
+ *   every seat), never the step function's. A second ron on the same discard is
+ *   an action after the end and throws. Double/triple ron is rejected by this
+ *   convention, not by the encoding — a future ruleset variant could accept a
+ *   second adjacent ron extend-only (accepting what previously threw).
  */
 export type HandAction =
   | { readonly type: 'draw'; readonly seat: Seat }
@@ -69,6 +88,8 @@ export type HandAction =
       readonly uses: readonly [TileId, TileId, TileId, TileId]
     }
   | { readonly type: 'shouminkan'; readonly seat: Seat; readonly tile: TileId }
+  | { readonly type: 'tsumo'; readonly seat: Seat }
+  | { readonly type: 'ron'; readonly seat: Seat; readonly tile: TileId }
 
 /**
  * A hand is this pair and nothing else. The seed determines the wall order (frozen rng
@@ -514,8 +535,9 @@ function applyAnkan(
  * — same index in the meld list, `claimed`/`from` preserved, `own` grown by the
  * added tile — so meld order stays claim order and the pond mark survives. Guard
  * order — turn, claim-discard owed, drawn present, rinshan availability, tile
- * held-or-drawn, matching pon exists. (Chankan — robbing this kan — is an agari
- * epic's concern; no ron exists yet.)
+ * held-or-drawn, matching pon exists. (Chankan — robbing this kan — remains
+ * unfoldable: this step is atomic, so no ron can intervene between the added
+ * tile and the rinshan draw; see the vocabulary's chankan note.)
  */
 function applyShouminkan(
   state: TableState,
@@ -577,6 +599,145 @@ function applyShouminkan(
   applyKanTail(state, kans)
 }
 
+/** A seat's own wind kind: Seat 0–3 anchors 1z–4z, the deal.ts ordering. */
+function windKindOf(seat: Seat): WindKind {
+  return `${seat + 1}z` as WindKind
+}
+
+/**
+ * The round wind every fold assembles wins with. Records are single hands — round
+ * rotation is match structure the engine does not hold — so the fold fixes East,
+ * which is correct for every East-round hand (all of a tonpuusen) and conservative
+ * elsewhere. The match epic threads the true round wind in as a fold input when it
+ * exists; until then yakuhai-round-wind fires for 1z triplets only.
+ */
+const ROUND_WIND: WindKind = '1z'
+
+/**
+ * The shared win tail of both win steps, after the form-specific guards named the
+ * winner and the winning tile: derive the win's yaku through yakuOf (the -04
+ * aggregator — yakuman supersession and the union across readings are its frozen
+ * contract) and end the hand. Two corruptions surface HERE because only the
+ * derivation can see them: a `tile` that completes nothing (yakuOf's non-completion
+ * throw, re-wrapped with the action index), and a completion carrying no yaku (the
+ * ONE-YAKU WIN GATE's refusal — a yakuless win action is corruption; legality
+ * (T-005-02-02) never offers one). On success the winning tile KEEPS its zone
+ * (tsumo: `drawn`; ron: the discarder's pond — see TableState.win) and the hand
+ * ends: phase 'agari', `win` filled, window closed. Ron jumps the turn to the
+ * winner (the claim-jump precedent); a tsumo's turn is already the winner's.
+ */
+function applyWinTail(
+  state: TableState,
+  index: number,
+  type: 'tsumo' | 'ron',
+  winner: Seat,
+  tile: TileId,
+  source: 'wall' | 'rinshan' | 'discard',
+  from: Seat | null,
+): void {
+  let yaku: readonly WinYakuName[]
+  try {
+    yaku = yakuOf({
+      concealed: [...state.hands[winner].map(kindOf), kindOf(tile)],
+      melds: state.melds[winner],
+      winningKind: kindOf(tile),
+      source,
+      lastTile: state.live.length === 0,
+      seatWind: windKindOf(winner),
+      roundWind: ROUND_WIND,
+    })
+  } catch {
+    throw new RangeError(
+      `action ${index}: ${type} by seat ${winner} on tile ${tile} (kind ${kindOf(tile)}), which does not complete seat ${winner}'s hand`,
+    )
+  }
+  if (yaku.length === 0) {
+    throw new RangeError(
+      `action ${index}: ${type} by seat ${winner} completes the hand with no yaku — a yakuless win is not a win (the one-yaku gate)`,
+    )
+  }
+  state.win =
+    from === null
+      ? { by: 'tsumo', winner, tile, yaku }
+      : { by: 'ron', winner, from, tile, yaku }
+  state.phase = 'agari'
+  state.claimable = null
+  state.turn = winner
+}
+
+/**
+ * The tsumo step: the turn seat declares its drawn tile completes the hand. Guard
+ * order — turn, claim-discard owed, drawn present, then the shared win tail's
+ * completion and yaku-gate guards. The source is `drawnFrom` verbatim ('wall' or
+ * 'rinshan'), which is what separates menzen-tsumo/haitei from rinshan kaihou.
+ */
+function applyTsumo(
+  state: TableState,
+  action: Extract<HandAction, { type: 'tsumo' }>,
+  index: number,
+): void {
+  const { seat } = action
+  if (seat !== state.turn) {
+    throw new RangeError(
+      `action ${index}: tsumo by seat ${seat}, but it is seat ${state.turn}'s turn`,
+    )
+  }
+  if (state.mustDiscard) {
+    throw new RangeError(
+      `action ${index}: tsumo out of sequence — seat ${seat} owes a discard for its claim`,
+    )
+  }
+  if (state.drawn === null) {
+    throw new RangeError(`action ${index}: tsumo before seat ${seat} drew`)
+  }
+  applyWinTail(state, index, 'tsumo', seat, state.drawn, state.drawnFrom!, null)
+}
+
+/**
+ * The ron step: a seat claims the fresh discard as its winning tile. Two entry
+ * arms share the guards — seat is not the discarder, tile names the fresh discard
+ * — then the win tail:
+ *
+ * - playing: against the open claim window, like chi/pon (a stale discard cannot
+ *   be ronned; the window is the authority).
+ * - ryuukyoku — THE HOUTEI ARM: the wall-emptying discard ends the hand before
+ *   any claim can be logged, so the houtei ron folds OUT of ryuukyoku, validated
+ *   against the reconstructed final discard: `turn` stays at the last discarder
+ *   (the documented ended-turn convention) and that pond's last tile IS the final
+ *   discard. Ryuukyoku → agari is the fold's only ended→ended transition,
+ *   mirroring the real rule that the houtei-ron check precedes the exhaustive-
+ *   draw declaration — the fold just states them in prefix-determinate order.
+ */
+function applyRon(
+  state: TableState,
+  action: Extract<HandAction, { type: 'ron' }>,
+  index: number,
+): void {
+  const { seat, tile } = action
+  let discarder: Seat
+  let discard: TileId
+  if (state.phase === 'ryuukyoku') {
+    discarder = state.turn
+    discard = state.ponds[discarder][state.ponds[discarder].length - 1]
+  } else if (state.claimable !== null) {
+    discarder = state.claimable.seat
+    discard = state.claimable.tile
+  } else {
+    throw new RangeError(
+      `action ${index}: ron by seat ${seat} with no claimable discard — nothing was discarded, or the discard went stale on the next draw`,
+    )
+  }
+  if (seat === discarder) {
+    throw new RangeError(`action ${index}: ron by seat ${seat} of its own discard`)
+  }
+  if (tile !== discard) {
+    throw new RangeError(
+      `action ${index}: ron of tile ${tile}, but the claimable discard is tile ${discard}`,
+    )
+  }
+  applyWinTail(state, index, 'ron', seat, tile, 'discard', discarder)
+}
+
 /**
  * The per-action step: advance the fold-local state by one logged action, mutating it
  * in place (every array in `state` is fresh to this fold, so the mutation is invisible
@@ -600,17 +761,24 @@ function applyShouminkan(
  *   discard arm always plays the tile that follows a kan.
  * - After a discard, if the live wall is empty the hand ends in ryuukyoku (so the
  *   fold is in an ended phase exactly when live is empty — and the final discard is
- *   never claimable); otherwise the turn advances E→S→W→N and the discard opens the
- *   claim window.
+ *   never chi/pon/kan-able); otherwise the turn advances E→S→W→N and the discard
+ *   opens the claim window.
+ * - The win forms end the cycle: a tsumo folds while the turn seat holds its drawn
+ *   tile (wall or rinshan — the discard arm's alternative); a ron folds INSTEAD of
+ *   a draw while the claim window is open, like pon, from any non-discarder. Either
+ *   ends the hand in 'agari' with the win recorded (see TableState.win).
+ * - THE HOUTEI EXCEPTION: a ron — and only a ron — also folds out of 'ryuukyoku',
+ *   against the reconstructed final discard (see applyRon). Every other action
+ *   after any ended phase throws.
  *
  * Anything else — an action after the end, an unknown type from untyped JS, a wrong
- * seat, a draw out of sequence, a discard of a tile not held, an illegal claim — is
- * log corruption and throws RangeError with the action's index (the nextInt
- * precedent: an action the engine cannot interpret must never fold silently into a
- * wrong state).
+ * seat, a draw out of sequence, a discard of a tile not held, an illegal claim, a
+ * corrupt win — is log corruption and throws RangeError with the action's index
+ * (the nextInt precedent: an action the engine cannot interpret must never fold
+ * silently into a wrong state).
  */
 function applyAction(state: TableState, action: HandAction, index: number): void {
-  if (state.phase !== 'playing') {
+  if (state.phase !== 'playing' && !(action.type === 'ron' && state.phase === 'ryuukyoku')) {
     throw new RangeError(
       `action ${index}: the hand already ended in ${state.phase} — no further action can fold`,
     )
@@ -708,6 +876,14 @@ function applyAction(state: TableState, action: HandAction, index: number): void
     }
     case 'shouminkan': {
       applyShouminkan(state, action, index)
+      return
+    }
+    case 'tsumo': {
+      applyTsumo(state, action, index)
+      return
+    }
+    case 'ron': {
+      applyRon(state, action, index)
       return
     }
     default: {
