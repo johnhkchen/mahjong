@@ -23,6 +23,7 @@ import {
   seatView,
   shanten,
   tileId,
+  waits,
   type CopyIndex,
   type HandAction,
   type Meld,
@@ -188,6 +189,58 @@ describe('discard arm — tie-break', () => {
       { type: 'discard', seat: view.seat, tile: pFirst },
     ]
     expect(discardPolicy(view, offered)).toBe(offered[0])
+  })
+})
+
+describe('discard arm — riichi (T-009-02-01)', () => {
+  it('declares riichi when it matches the discard arm\'s own chosen tile', () => {
+    const take = tileSource()
+    const hand = take('123m456p789s1122z')
+    const drawn = take('5z')[0]
+    const view = viewOf({ hand, drawn })
+    const riichi: HandAction = { type: 'riichi', seat: view.seat, tile: drawn }
+    // legalActions order: the 14 discards, then the riichi offers.
+    const offered = [...discardsOf(view), riichi]
+    const chosen = discardPolicy(view, offered)
+    expect(chosen).toBe(riichi)
+    // Re-derive: discarding 5z is the unique shanten-0 discard, and the resulting
+    // shanpon wait on 1z/2z is genuinely winnable — not the dead-wait exception.
+    const remainder = [...hand, drawn].filter((t) => t !== drawn).map(kindOf)
+    expect(shanten(remainder, [])).toBe(0)
+    expect(waits(remainder, [])).toEqual(['1z', '2z'])
+  })
+
+  it('declines a riichi offer that would lock in a dead wait, keeping the plain discard', () => {
+    const take = tileSource()
+    const hand = take('1111m234p567p789s')
+    const drawn = take('9m')[0]
+    const view = viewOf({ hand, drawn })
+    const discard: HandAction = { type: 'discard', seat: view.seat, tile: drawn }
+    const riichi: HandAction = { type: 'riichi', seat: view.seat, tile: drawn }
+    // Curated offered: isolates this one candidate, the same way the copies-tie test
+    // does above — the realistic full offered set never reaches it at all (the four
+    // 1m-copy discards tie it on center-distance and win on earliest-offered instead;
+    // each of those leaves a live 9m tanki wait, not a dead one).
+    const offered: HandAction[] = [discard, riichi]
+    const chosen = discardPolicy(view, offered)
+    expect(chosen).toBe(discard)
+    // Re-derive: discarding the drawn 9m restores 1111m234p567p789s — shanten 0, but
+    // every copy of the only completing kind (1m) is already visible to the hand
+    // itself, so the wait is dead: it can win by neither ron nor tsumo.
+    const remainder = [...hand, drawn].filter((t) => t !== drawn).map(kindOf)
+    expect(shanten(remainder, [])).toBe(0)
+    expect(waits(remainder, [])).toEqual([])
+  })
+
+  it('ignores another seat\'s riichi offer when finding its own', () => {
+    const take = tileSource()
+    const hand = take('123m456p789s1122z')
+    const drawn = take('5z')[0]
+    const view = viewOf({ seat: 2, hand, drawn })
+    const riichi: HandAction = { type: 'riichi', seat: 2, tile: drawn }
+    const decoy: HandAction = { type: 'riichi', seat: 1, tile: drawn }
+    const offered = [decoy, ...discardsOf(view), riichi]
+    expect(discardPolicy(view, offered)).toBe(riichi)
   })
 })
 
