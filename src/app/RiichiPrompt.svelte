@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { TileId } from '../core'
+  import { term } from './dictionary.svelte'
   import Tile from './Tile.svelte'
 
   // The P2-crown moment, charter.md's own quoted example ("you're tenpai — declare
@@ -22,7 +23,7 @@
 
 <aside class="prompt riichi" role="group" aria-label="riichi prompt">
   <p class="ask">
-    you're tenpai — declare riichi with <Tile id={tile} />?
+    you're {term('tenpai')} — declare {term('riichi')} with <Tile id={tile} />?
   </p>
   <ul class="stakes">
     <li aria-label="stake hand-locks">hand locks — every later turn discards whatever you draw</li>
@@ -30,11 +31,11 @@
     <li aria-label="stake yaku">riichi is its own yaku, and a win flips extra dora for a chance at more</li>
   </ul>
   <div class="buttons">
-    <button type="button" class="call declare" aria-label="declare riichi" onclick={() => ondeclare?.()}>
-      declare riichi
+    <button type="button" class="call declare" aria-label={term('declareRiichi')} onclick={() => ondeclare?.()}>
+      {term('declareRiichi')}
     </button>
-    <button type="button" class="pass" aria-label="not yet" onclick={() => ondecline?.()}>
-      not yet
+    <button type="button" class="pass" aria-label={term('notYet')} onclick={() => ondecline?.()}>
+      {term('notYet')}
     </button>
   </div>
 </aside>
