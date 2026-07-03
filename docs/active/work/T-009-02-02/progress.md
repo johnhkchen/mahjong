@@ -82,3 +82,41 @@ state). Not fixing them: they belong to other tickets' scope (design.md's explic
 non-goal list), and touching `settlement.ts`/`selfplay.test.ts`/`src/app/*` here would
 cross ticket boundaries this ticket has no dependency edge for. Flagged in review.md for
 human attention.
+
+## Repair (2026-07-04) — the overseer folded those flagged failures into this ticket
+
+The repair note (ticket file, added by the overseer after this ticket first reached
+`phase: done`) reconciles: the four failures flagged above are this ticket's remit now,
+not a future ticket's. `just test` was RED (4 failed / 899 passed) at repair start.
+
+- **Step 6 (baseline):** confirmed all four failures named in the repair note, EXCEPT
+  `app.controls.svelte.test.ts` — already green (`npx vitest run
+  src/app/app.controls.svelte.test.ts`: 3/3 passing), fixed by an intervening commit
+  (`59b81ec`) before this session. No action taken on that file.
+- **Step 7 (settlement.property.test.ts):** done as planned. One assertion changed to
+  `deltas.reduce(+) + unclaimedPot === 0`. Re-ran 5x consecutively, all green (fast-check
+  samples a new random seed set each run — 5 green runs rules out a lucky pass).
+- **Step 8 (selfplay.test.ts anchors):** done, with the seed-13 re-anchor from
+  design.md Decision 7. Instrumented both anchors with temporary `console.log`, captured
+  actual output, then wrote expectations from it (never guessed):
+  - seed 25: `{len: 36, win: {by: 'tsumo', winner: 1, tile: 52, yaku: ['menzen-tsumo',
+    'riichi']}}` — only `yaku` changed.
+  - seed 13 (old): `{len: 107, win: {by: 'ron', winner: 1, from: 0, tile: 58, yaku:
+    ['riichi']}}` — no longer a houtei scenario. Scanned seeds 0-39 for a replacement
+    still producing `'houtei'` — zero hits. Widened to 0-499 — first hit at seed 356:
+    `{len: 147, win: {by: 'ron', winner: 0, from: 2, yaku: ['houtei']}}`. Re-anchored to
+    356, deleted seed 13's `it` block, all instrumentation removed before commit.
+  - All 6 tests in the file pass (confirms seeds 9/19's unrelated anchors are untouched).
+- **Step 9 (drive.test.ts anchor):** done. Instrumented, captured `{len: 73, win: {by:
+  'ron', winner: 2, from: 0, tile: 17, yaku: ['riichi', 'ittsuu']}}` — only `yaku`
+  order/membership changed (gained `'riichi'` ahead of `'ittsuu'`). All 72 tests in the
+  file pass.
+- **Step 10 (full-suite + typecheck):** `just test` green twice consecutively (903/903,
+  0 failed). `just check`: 0 errors, 0 warnings (194 files).
+
+No deviations from plan.md's repair steps. No production code touched — every fix is a
+test-side expectation update, consistent with design.md's repair non-goals.
+
+Committed as `7ea321f`: "Repair T-009-02-02: pot-aware settlement property, re-mined
+riichi anchors" (3 files changed: `drive.test.ts`, `selfplay.test.ts`,
+`settlement.property.test.ts`).

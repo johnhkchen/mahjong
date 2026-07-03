@@ -96,3 +96,44 @@ particular commit order — they will land as one commit per plan.md.
 tested — the corpus is already confirmed non-vacuous by research.md's probe, no corpus
 widening required). `just test` (full `src/core/` suite) must stay green — no other file
 changes, so no other suite should be affected.
+
+## Repair (2026-07-04) — three more files, no production code
+
+**Modified: `src/core/settlement.property.test.ts`, `src/core/selfplay.test.ts`,
+`src/app/drive.test.ts`.** Still no production-code changes (design.md Decision 6-8; all
+four pre-repair failures are stale test-side expectations).
+
+### Change 4 — `settlement.property.test.ts`, one `it` block (line ~460)
+
+Rename the test to name the corrected law (`'every random seed folds to an ended
+TableState whose deltas plus the unclaimed pot sum to zero'`) and change its one
+assertion from `expect(deltas.reduce(+)).toBe(0)` to computing `unclaimedPot = phase ===
+'agari' ? 0 : state.pot` and asserting `expect(deltas.reduce(+) + unclaimedPot).toBe(0)`
+— the same `expectedPotCarry` shape as Change 1 above, restated at this file's own
+`state`/`deltas` variables rather than imported (this file has no dependency on
+`game.dynamics.test.ts`, and the codebase's restate-don't-share convention applies).
+
+### Change 5 — `selfplay.test.ts`, two `it` blocks inside `'mined anchors'`
+
+- Seed 25's `it`: one-line change, `expect(win.yaku).toEqual(['menzen-tsumo'])` →
+  `expect(win.yaku).toEqual(['menzen-tsumo', 'riichi'])`. No other field changes.
+- Seed 13's `it`: replaced wholesale — new seed (356), new pinned length (147), new win
+  facts (`ron`, winner 0, from 2, `yaku: ['houtei']`), title/comment updated to say "seed
+  356" and drop the "re-mined" framing once landed (design.md Decision 7). The
+  `if (win.by === 'ron') expect(win.from).toBe(2)` guard follows the existing
+  seed-9 anchor's own pattern in this same file (type-narrowing before reading a
+  ron-only field) rather than inventing a new shape.
+
+### Change 6 — `drive.test.ts`, one `it` block (`'plays deal → a BOT rons the player'`)
+
+One-line change to the `won.win` expectation: `yaku: ['ittsuu']` →
+`yaku: ['riichi', 'ittsuu']` (order matches the mined fact, not asserted independently).
+Everything else in the block (`actions` length 73, `by`/`winner`/`from`/`tile`) is
+unchanged.
+
+## Verification surface (repair)
+
+Each of the three files' previously-failing test(s) must pass in isolation
+(`npx vitest run <file>`), and `just test` (full suite, all 35 files) must be green with
+no other regressions. `just check` must stay clean (no new types introduced, no signature
+changes to any exported function).

@@ -106,3 +106,52 @@ prefix boundary already.
 - This codebase's stated doctrine (dynamics.test.ts, game.dynamics.test.ts headers):
   restate invariants independently by test rather than reading the implementation's own
   branch, and extend existing dynamics/agreement suites rather than forking new files.
+
+## Repair (2026-07-04) — expanded scope, `just test` RED
+
+The prior pass above landed `game.dynamics.test.ts` (commit `751ed5c`) but left `just
+test` failing in four unrelated tests, all downstream of the same T-009-02-01 change
+(bots now declare riichi eagerly) but scoped OUT of the original design.md as "other
+tickets' concern." The overseer's repair note (ticket file, 2026-07-04) folds them into
+this ticket instead. Mapped against `npx vitest run` before this repair:
+
+1. **`src/core/settlement.property.test.ts`** — `"every random seed folds to an ended
+   TableState whose four deltas sum to zero"` (line ~460) fails deterministically
+   (`expected -1000 to be 0`, seed 415660548 shrunk from fast-check). This is the
+   single-hand analogue of the exact law `settlement.ts`'s own header already documents
+   (lines 53-66, read during the original research pass): once a riichi stick sits
+   unclaimed in `state.pot` at a ryuukyoku ending, deltas no longer sum to zero — they sum
+   to `-state.pot` (a ryuukyoku distributes nothing further; the sticks left seats' scores
+   and haven't reached anyone). `endedStateOf` (this file, no `RiichiContext` — defaults
+   to `potIn: 0`) means the general law (`deltas.reduce + unclaimedPot === potIn`)
+   simplifies to `deltas.reduce + unclaimedPot === 0` here, where `unclaimedPot` is 0 for
+   an agari (winner absorbed the whole pot into their delta) and `state.pot` for a
+   ryuukyoku.
+
+2. **`src/core/selfplay.test.ts`** — two "mined anchor" tests (`describe('mined anchors —
+   the composed behavior frozen for named seeds')`) pin exact action-log lengths and win
+   facts for named seeds. `selfPlay` (this file's own local driver, lines 81-139) calls
+   `discardPolicy` for every own-turn choice — the same function T-009-02-01 changed — so
+   its output for any seed touching a riichi-eligible turn shifted. Seed 25: same length
+   (36) and same tsumo/winner/tile, `yaku` gained `'riichi'`. Seed 13: **materially
+   different** — length dropped 141→107, winner shifted from seat 0 to seat 1, and the
+   win is no longer a houtei ron (the hand now ends via a plain ron well before the wall
+   empties). Confirmed by instrumented re-run (temporary `console.log` of `selfPlay(13)`,
+   removed before commit).
+
+3. **`src/app/drive.test.ts`** — `'plays deal → a BOT rons the player'` pins `won.win` for
+   `HOUTEI_SEED` (1038928) via the app-level `playToWin` driver (a different code path
+   than `selfplay.test.ts`'s local `selfPlay`, but calling the same `discardPolicy`).
+   Confirmed by instrumented re-run: length (73) and every win field unchanged except
+   `yaku`, which gains `'riichi'` (West is now in riichi at the moment of the win).
+
+4. **`src/app/app.controls.svelte.test.ts`** — the repair note's fourth item ("resets
+   scores to 25000 each... check newGame()/foldGame boot state") does **not** currently
+   fail (`npx vitest run src/app/app.controls.svelte.test.ts`: 3/3 passing). Already fixed
+   by an intervening commit (`59b81ec`, "Repair stuck loop..." per `git log`) before this
+   session started. No action needed; verified, not assumed.
+
+No production code (`policy.ts`, `settlement.ts`, `record.ts`, `game.ts`) needed to
+change for any of the four — every failure is a stale test-side expectation or a stale
+invariant statement, consistent with T-009-02-01 (which changed `discardPolicy`, not any
+settlement/pot code) being the actual root cause of all four.

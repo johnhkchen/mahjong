@@ -96,3 +96,69 @@ The three code changes are complete and match the ticket's AC clauses one-to-one
 already byte-identical (pre-existing, verified), conservation now pot-aware, pot-carry
 independently asserted, riichi non-vacuity asserted, no-stalling already covered
 (pre-existing, verified).
+
+---
+
+## Repair (2026-07-04) — closing the "Open concerns" this review itself flagged
+
+The prior review (above) correctly scoped its own change to `game.dynamics.test.ts` but
+left `just test` red end-to-end and explicitly flagged the four failures below for "a
+human (or Lisa)... since they were both introduced by T-009-02-01... and neither has a
+tracking ticket." The overseer's response was to fold them into THIS ticket via a repair
+note rather than opening a new one. This section is the handoff for that repair.
+
+### What changed, concretely (commit `7ea321f`)
+
+Three files, all test-only, no production code:
+
+1. **`src/core/settlement.property.test.ts`** — the single-hand zero-sum property
+   (`"every random seed folds to an ended TableState whose four deltas sum to zero"`)
+   was stating a law `settlement.ts`'s own module header explicitly says stopped holding
+   once riichi sticks exist. Fixed to assert `deltas.reduce(+) + unclaimedPot === 0`
+   (`unclaimedPot` = 0 for an agari, `state.pot` for a ryuukyoku) — the exact law this
+   ticket's original pass already applied at game level, now also correct at the
+   single-hand property level. Verified stable across 5 consecutive runs (fast-check
+   samples randomly).
+
+2. **`src/core/selfplay.test.ts`** — two frozen "mined anchor" tests re-pinned to the new
+   `discardPolicy` (riichi-eager) behavior:
+   - Seed 25: unchanged length/winner/tile, `yaku` gained `'riichi'`.
+   - Seed 13: its trajectory changed materially (107 actions vs. 141, winner shifted
+     seat 0→1) and no longer reaches the houtei-ron-out-of-ryuukyoku scenario this anchor
+     exists to pin. Rather than re-pin seed 13 to its new (different) facts, re-anchored
+     the test to **seed 356**, found by scanning the seed space for one that still
+     produces that scenario under the new bot behavior — preserves the anchor's original
+     purpose instead of quietly narrowing it.
+
+3. **`src/app/drive.test.ts`** — the "a BOT rons the player" anchor (`HOUTEI_SEED` =
+   1038928): unchanged length/winner/tile/from, `yaku` gained `'riichi'` (West is now in
+   riichi at the win).
+
+The repair note's fourth item, `app.controls.svelte.test.ts` ("resets scores to 25000
+each"), needed **no change** — verified already passing at repair start, fixed by an
+intervening commit (`59b81ec`) before this session began.
+
+### Test coverage
+
+`just test`: 903/903 passing (35/35 files), run twice consecutively. `just check`: 0
+errors, 0 warnings. Each touched file also verified in isolation. The
+fast-check-dependent `settlement.property.test.ts` was additionally re-run 5x standalone
+to rule out a lucky pass rather than a genuinely-fixed invariant.
+
+### Open concerns / flags for human attention
+
+- **The seed-356 re-anchor (selfplay.test.ts) is the one judgment call worth a second
+  look.** It's a real, unmodified self-play output (not constructed), and it reproduces
+  the same "ron pulled out of what would be ryuukyoku" shape the old seed-13 anchor
+  pinned — but it's outside the original 0-39 "corpus" range the file's other named
+  anchors live in (found by scanning 0-499, first hit at 356). This is a deliberate,
+  documented choice (design.md Decision 7), not an oversight, but it does mean this one
+  anchor's seed no longer aligns with the informal "anchors live in the mined corpus"
+  pattern the rest of the file follows.
+- **No new production-code risk.** Every change in both the original pass and this
+  repair is test-only; `policy.ts`'s riichi-eager `discardPolicy` (T-009-02-01) is the
+  actual behavior change underlying all of it, and it already has its own ticket/tests.
+- This ticket's own AC (game-level dynamics suite) has been green and stable since the
+  original pass; this repair closes the surrounding `just test` gaps the original review
+  flagged but explicitly did not fix. `just test` is now fully green end to end, which is
+  this ticket's stated definition of done per the repair note.

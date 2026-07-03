@@ -106,3 +106,74 @@ corpus-level checks they extend.
 No change to `game.ts`, `record.ts`, `settlement.ts`, or `policy.ts` — confirmed correct
 by research and by the single-hand suite's own passing tests. No new fixtures, no new
 driver function, no widened corpus.
+
+## Repair (2026-07-04) — three more decisions, expanded scope
+
+### Decision 6: fix `settlement.property.test.ts` by correcting its stated law, not by
+freezing `state.pot` out of the check
+
+**Options considered:**
+- (a) Change the assertion to `deltas.reduce(+) + unclaimedPot === 0` (`unclaimedPot` is 0
+  for `'agari'`, `state.pot` for `'ryuukyoku'`) — the same law this ticket's original pass
+  applied at game level, restated at the single-hand property level `endedStateOf` already
+  operates at.
+- (b) Change `endedStateOf`'s driver to suppress riichi declarations (e.g. filter riichi
+  out of `legalActions` before calling `discardPolicy`), preserving the old "always
+  exactly zero" law by construction.
+- (c) Skip/weaken the property to only sample non-riichi-bearing seeds.
+
+**Chosen: (a).** `settlement.ts`'s own module header (read in research, lines 53-66)
+already states this exact corrected law in prose — this is applying documented,
+already-decided doctrine to a test that predates it, not a new design choice. (b) would
+make the property test stop exercising riichi-bearing hands at all, silently narrowing
+coverage exactly where a real invariant (the pot-aware conservation law) needs proving —
+worse than doing nothing, since it would look green while testing less. (c) is the
+"weaken the check" anti-pattern this codebase's own test-file headers explicitly warn
+against (`selfplay.test.ts`'s corpus doc comment: "Zeroed by a policy/legal change? Widen
+the corpus... never weaken the check" — the same doctrine applies here by analogy).
+
+### Decision 7: re-mine `selfplay.test.ts`'s anchors in place; re-anchor seed 13 to a
+different seed rather than reframe its assertions
+
+Seed 25 only gained a `'riichi'` yaku entry — a pure re-pin, no design choice. Seed 13 is
+the real decision: its new trajectory (ends via plain ron at action 107, winner shifted
+to seat 1) no longer exercises the scenario the test's own title and comment name — "a
+houtei ron folded OUT of ryuukyoku (the ended→ended transition)."
+
+**Options considered:**
+- (a) Re-pin seed 13 to its own new facts (ron, winner 1, `yaku: ['riichi']`), keep the
+  seed number, drop or rewrite the houtei-specific title/comment since it no longer
+  applies.
+- (b) Scan the full seed domain for a different seed that still produces a houtei ron
+  under the new riichi-eager bots, and re-anchor the test's seed to that one, keeping the
+  scenario intact.
+- (c) Delete the anchor entirely, reasoning the scenario is already covered by
+  `drive.test.ts`'s dedicated fixture-driven houtei carve-out test.
+
+**Chosen: (b), landed on seed 356** (scanned 0-499 via an instrumented temporary test,
+removed before commit; no hit inside the original 0-39 corpus range, first hit at 356:
+`ron, winner 0, from 2, yaku: ['houtei'], length 147` — the closest match to seed 13's
+old shape, and stable across the run). This is a corpus/anchor-widening move, not a
+weakened check — the same "widen, don't weaken" doctrine as Decision 6, applied to a
+named-seed anchor instead of a property's sample count. (a) would silently drop this
+anchor's entire reason for existing (proving the ended→ended houtei carve-out is reached
+via real self-play, not just a hand-constructed fixture) while leaving a misleading title
+in place. (c) was rejected: `drive.test.ts`'s test is deliberately constructed
+(hand-picked action sequence) to prove the state-level mechanism works at all; this
+anchor's distinct value is proving a *real, unmodified self-play driver* reaches that same
+mechanism unassisted — losing it would be a silent coverage regression, exactly what the
+repair note ("reconcile, don't revert") warns against.
+
+### Decision 8: `drive.test.ts`'s BOT-rons-the-player anchor — pure re-pin
+
+Length (73) and every win field except `yaku` are unchanged; the fix is adding `'riichi'`
+ahead of `'ittsuu'` in the expected array (yaku order follows `yakuOf`'s own union order,
+confirmed by the instrumented re-run, not asserted independently here — no design
+question, just the mined fact).
+
+## Non-goals (repair)
+
+No change to `policy.ts`, `settlement.ts`, `record.ts`, or `game.ts` in this repair either
+— all four failures are stale test-side expectations, confirmed root-caused to
+T-009-02-01's `discardPolicy` change, never to a settlement/pot bug. `app.controls.svelte.test.ts`,
+the repair note's fourth item, needed no change — verified already green (research.md).

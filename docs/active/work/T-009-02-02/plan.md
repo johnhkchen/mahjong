@@ -85,3 +85,59 @@ riichi (T-009-02-01)").
   pot with zero contribution from the new empty hand (true by `foldRecord`'s definition —
   an empty `actions` array performs no `applyRiichi`, so `state.pot` stays at `context.potIn`
   — but worth eyeballing in the actual diff/run rather than assuming).
+
+## Repair (2026-07-04) — steps 6-10
+
+### Step 6 — reproduce the expanded-scope baseline
+
+`just test`: confirm exactly the four failures the repair note names (settlement
+property, selfplay seeds 25/13, drive.test.ts), and confirm the note's fourth item
+(`app.controls.svelte.test.ts`) is already green (`npx vitest run
+src/app/app.controls.svelte.test.ts`). Do not assume the note is current — verify.
+
+**Verification:** `just test` output shows 4 failed / 899 passed across exactly the three
+named files; the fourth file passes standalone.
+
+### Step 7 — fix `settlement.property.test.ts` (structure.md Change 4)
+
+**Verification:** `npx vitest run src/core/settlement.property.test.ts` passes. Repeat
+5x (fast-check samples randomly each run) to rule out a flaky fix rather than a correct
+one.
+
+### Step 8 — re-mine and re-pin `selfplay.test.ts`'s two anchors (structure.md Change 5)
+
+Instrument first (temporary `console.log` of `selfPlay(25)`/`selfPlay(13)`'s actual
+`{length, endPhase, win}`), read the actual values, THEN write the new expectations —
+never guess a plausible-looking fixed value. For seed 13, since its new trajectory drops
+the houtei scenario the test exists to pin, scan seeds 0-39 first (matches the existing
+named-anchor range) for a replacement that still exhibits it; if none exists in that
+range, widen the scan (design.md Decision 7). Remove all instrumentation before
+committing.
+
+**Verification:** `npx vitest run src/core/selfplay.test.ts` — all 6 tests (not just the
+2 previously failing) pass, confirming the re-mine didn't disturb seeds 9/19's
+already-passing anchors.
+
+### Step 9 — re-pin `drive.test.ts`'s BOT-rons-the-player anchor (structure.md Change 6)
+
+Same instrument-then-pin discipline as Step 8.
+
+**Verification:** `npx vitest run src/app/drive.test.ts` — all tests in the file pass
+(71 pre-existing + this 1, not just this 1 in isolation).
+
+### Step 10 — full-suite regression + typecheck
+
+`just test` (all 35 files) and `just check`, both must be clean. Re-run `just test` a
+second time to catch any fast-check flakiness the single run might have missed (only
+`settlement.property.test.ts` samples randomly among the touched files).
+
+**Verification:** two consecutive green `just test` runs; `just check` exits 0.
+
+## Commit plan (repair)
+
+One commit covering Changes 4-6 together — same "not independently meaningful, land as
+the repair they are" reasoning as the original plan's commit, and because splitting by
+file would make three commits each individually leave `just test` red (they're
+independent failures with a shared root cause, not a dependency chain, but the repair
+note's own framing — and this ticket's own "done still means just test fully green" — is
+about the whole tree, not file-by-file).
