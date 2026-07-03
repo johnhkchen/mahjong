@@ -51,3 +51,19 @@ to keep it lean. One line per epic: what it delivered. Full cards live in
   gate (actual: 83KB), portrait one-thumb layout with 44px targets, CSS-only draw/discard/
   claim/hand-end motion honoring prefers-reduced-motion, display-sort with tap→exact-TileId
   guard. 9/9 tickets done (577 tests green at sweep).
+- **E-008 score-and-continue-the-game** (owner pull + Tier 5 scoring crown) — every win priced:
+  fu table (pinfu 20/30, chiitoi 25, round-up), han onto the yaku catalog + dora/kan-dora,
+  full dealer/non-dealer × ron/tsumo payment tables with limits, noten-bappu; the GameRecord
+  fold (25000 starts, derived per-hand seeds, renchan/rotation with seat winds tracking); the
+  han×fu property grid vs published tables + zero-sum settlements; score-breakdown screen and
+  next-hand/new-game controls. Card by vend, decomposition by overseer. 8/8 tickets done.
+- **E-009 declare-riichi-on-purpose** (the DoD pull) — riichi declaration/lock/1000-stick pot
+  with ryuukyoku carry; riichi/double-riichi/ippatsu/uradora priced; furiten completed
+  (temporary + riichi variants, fold-derived); bots declare; the tenpai "declare riichi?"
+  prompt with stakes, furiten badge, yakuless notice, shanten hint. One session death left
+  HEAD red mid-epic — repaired via ticket repair-note; final suite reconciles pot conservation
+  at hand and game level. Card by vend, decomposition by overseer. 8/8 tickets done.
+- **E-010 chinese-terminology-option** (owner ask) — Traditional Chinese game terms
+  (吃 碰 槓 胡 自摸 立直 流局 聽牌 振聽, seats 東南西北, score-screen terms) behind a header
+  toggle, one localStorage key, romaji default, dual-terminology SSR coverage, single-file
+  gate green (104KB). Fully overseer-authored. 3/3 tickets done (936 tests at sweep).
