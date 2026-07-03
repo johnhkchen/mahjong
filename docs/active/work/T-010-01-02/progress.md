@@ -41,3 +41,19 @@ Done. `STORAGE_KEY`, `isTerminology`, `loadStored()` added; `current` seeded fro
 comments updated to present tense. `vitest-dom-setup.ts` + `vite.config.ts` added alongside (the
 deviation's second fix). Full suite green (903/903, repeated runs, no warnings). `just check`
 clean.
+
+## Step 2 — `App.svelte` toggle control
+
+Done. `TERMINOLOGY_LABEL`, `otherTerminology`, `toggleTerminology` added; header gains the
+second button; `.new-game`/`.terminology-toggle` share their CSS via a comma-selector (design.md
+Decision 3 — no shared class name). `just check` clean, full suite green (903/903).
+
+Manual browser verification (no project run-skill existed, so used the `run` skill's
+browser-driven fallback — Playwright against `just dev`'s server, headless Chromium, 390×844
+viewport): confirmed the toggle renders beside "new game" at identical visual weight (screenshot
+diffed by eye); clicking it relabels every wind name live (`East/South/West/North` →
+`東/南/西/北`) with the button itself flipping to name the OTHER terminology
+(`中文` → `romaji`); the dealt hand's 13 tiles are unchanged before/after; the choice writes to
+exactly the `mahjong-terminology` localStorage key; a real page reload (not just a module reset)
+still shows `zh-hant`; a second click reverts everything; zero console warnings/errors captured
+during the whole run. Screenshots and the driver script were scratch artifacts, not committed.

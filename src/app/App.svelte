@@ -23,7 +23,7 @@
     type ClaimChoice,
   } from './drive'
   import ClaimPrompt from './ClaimPrompt.svelte'
-  import { term } from './dictionary.svelte'
+  import { activeTerminology, setTerminology, term, type Terminology } from './dictionary.svelte'
   import RiichiPrompt from './RiichiPrompt.svelte'
   import Table from './Table.svelte'
 
@@ -94,6 +94,20 @@
   // Pacing is presentation: one forced action per tick keeps ponds and the wall
   // counter landing visibly, action by action, instead of a whole bot round at once.
   const BOT_DELAY_MS = 250
+
+  // The header toggle's own display names (T-010-01-02) — NOT a dictionary.svelte.ts
+  // TERMS entry: a terminology's own name doesn't change meaning under the other
+  // terminology (design.md Decision 4). The button always names the terminology a
+  // tap switches TO, never the one currently active.
+  const TERMINOLOGY_LABEL: Record<Terminology, string> = { romaji: 'romaji', 'zh-hant': '中文' }
+
+  function otherTerminology(t: Terminology): Terminology {
+    return t === 'romaji' ? 'zh-hant' : 'romaji'
+  }
+
+  function toggleTerminology() {
+    setTerminology(otherTerminology(activeTerminology()))
+  }
 
   // The active hand's growing action log — always the record's LAST element.
   // Read fresh on every call (never cached) so a push always lands on whichever
@@ -183,6 +197,13 @@
   <header>
     <span>mahjong</span>
     <button class="new-game" onclick={newGame}>new game</button>
+    <button
+      class="terminology-toggle"
+      onclick={toggleTerminology}
+      aria-label={`switch to ${TERMINOLOGY_LABEL[otherTerminology(activeTerminology())]}`}
+    >
+      {TERMINOLOGY_LABEL[otherTerminology(activeTerminology())]}
+    </button>
   </header>
   <Table {table} ontap={tap} scores={seatScores} onnext={newHand} {furitenTile} yakulessTenpai={yakuless} />
   <!-- Visibility is the drive predicate family: claim choices or the win offer.
@@ -271,8 +292,13 @@
   }
 
   /* Same visual register as the header wordmark, but a real ≥44px touch target
-     (padding carries the hit area; the border keeps it discoverable as a control). */
-  .new-game {
+     (padding carries the hit area; the border keeps it discoverable as a control).
+     Shared with .terminology-toggle via this selector, not a shared class name —
+     `.new-game` stays a functionally meaningful class elsewhere (e.g.
+     app.controls.svelte.test.ts's `querySelector('.new-game')`), so the toggle gets
+     its own class and only borrows the declarations (design.md Decision 3). */
+  .new-game,
+  .terminology-toggle {
     font: inherit;
     font-size: 0.75rem;
     letter-spacing: 0.15em;
@@ -285,7 +311,8 @@
     min-height: 44px;
     cursor: pointer;
   }
-  .new-game:active {
+  .new-game:active,
+  .terminology-toggle:active {
     background: #1c3a2c;
   }
 </style>
