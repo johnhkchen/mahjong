@@ -219,6 +219,23 @@ for (const terminology of TERMINOLOGIES) {
         expect(body).toContain(`>${t.kan}<`)
         expect(body).toContain(`>${t.pon}<`)
       })
+
+      it("labels a ron winner beating the player's pon — T-011-02-03, matches drive.test.ts's own mined seed-2654435812 fixture", () => {
+        setTerminology(terminology)
+        const outcome: WindowOutcome = { winner: 1, winnerType: 'ron', playerType: 'pon' }
+        const { body } = render(WindowNotice, { props: { outcome } })
+        expect(body).toContain(`>${t.south}<`)
+        expect(body).toContain(`>${t.ron}<`)
+        expect(body).toContain(`>${t.pon}<`)
+      })
+
+      it('labels a ron winner beating the player\'s own ron — the atamahane case, synthetic (no fixture; see drive.test.ts)', () => {
+        setTerminology(terminology)
+        const outcome: WindowOutcome = { winner: 2, winnerType: 'ron', playerType: 'ron' }
+        const { body } = render(WindowNotice, { props: { outcome } })
+        expect(body).toContain(`>${t.west}<`)
+        expect(body).toContain(`>${t.ron}<`)
+      })
     })
 
     describe('riichi prompt', () => {

@@ -26,15 +26,25 @@ const RACE_GAME_SEED = 2654435561 // `344 ^ 0x9e3779b1 >>> 0` — game.ts's hand
 
 import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { callTerm, setTerminology, windTerm, type Terminology } from './dictionary.svelte'
 import App from './App.svelte'
 
 const BOT_DELAY_MS = 250 // App.svelte's own pacing constant, duplicated per convention
+
+// T-011-02-03: the whole lifecycle walk (open → lose → notice → reopen → remount →
+// cascade-preempt) runs under both terminologies — the DOM-structural assertions
+// (isConnected, className, !==) are terminology-independent and unchanged; only the
+// notice/aria-label text expectations are read off callTerm/windTerm instead of
+// hardcoded English (app.terminology.coverage.ssr.test.ts owns literal translation-
+// correctness at the component level).
+const TERMINOLOGIES: readonly Terminology[] = ['romaji', 'zh-hant']
 
 let cleanups: Array<() => void> = []
 afterEach(() => {
   for (const cleanup of cleanups) cleanup()
   cleanups = []
   vi.useRealTimers()
+  setTerminology('romaji')
 })
 
 beforeEach(() => {
@@ -82,93 +92,104 @@ async function tickUntil(
   throw new Error('tickUntil: exceeded maxTicks')
 }
 
-describe('the mixed claim-window race (seed 344)', () => {
-  it("loses the player's chi to West's pon with no visible outcome, then a second chi window opens within three ticks", async () => {
-    const target = mountApp(RACE_GAME_SEED)
+for (const terminology of TERMINOLOGIES) {
+  describe(`${terminology} terminology`, () => {
+    describe('the mixed claim-window race (seed 344)', () => {
+      it("loses the player's chi to West's pon with no visible outcome, then a second chi window opens within three ticks", async () => {
+        setTerminology(terminology)
+        const target = mountApp(RACE_GAME_SEED)
 
-    // Five tsumogiri rounds — the player tsumogiris his own draw each time, the
-    // bots resume by real policy in between (tickUntil, same as every other
-    // App-mounted suite; no action count is hardcoded on the app side).
-    for (let round = 0; round < 5; round++) {
-      await tickUntil(target, () => drawnButton(target) !== null)
-      drawnButton(target)!.click()
-      flushSync()
-    }
+        // Five tsumogiri rounds — the player tsumogiris his own draw each time, the
+        // bots resume by real policy in between (tickUntil, same as every other
+        // App-mounted suite; no action count is hardcoded on the app side).
+        for (let round = 0; round < 5; round++) {
+          await tickUntil(target, () => drawnButton(target) !== null)
+          drawnButton(target)!.click()
+          flushSync()
+        }
 
-    // The window is up: exactly one claim button (the deduped chi variants), no
-    // win offer (nobody's tenpai here) — fixture sanity before the race itself.
-    await tickUntil(target, () => claimPrompt(target) !== null)
-    const firstPromptNode = claimPrompt(target)!
-    const firstCalls = callButtons(target)
-    expect(firstCalls).toHaveLength(1)
-    expect(firstCalls[0]!.getAttribute('aria-label')).toBe('chi 8m with 6m 7m')
-    expect(target.querySelector('[aria-label="west melds"]')).toBeNull()
+        // The window is up: exactly one claim button (the deduped chi variants), no
+        // win offer (nobody's tenpai here) — fixture sanity before the race itself.
+        await tickUntil(target, () => claimPrompt(target) !== null)
+        const firstPromptNode = claimPrompt(target)!
+        const firstCalls = callButtons(target)
+        expect(firstCalls).toHaveLength(1)
+        expect(firstCalls[0]!.getAttribute('aria-label')).toBe(`${callTerm('chi')} 8m with 6m 7m`)
+        expect(target.querySelector('[aria-label="west melds"]')).toBeNull()
 
-    const handTilesBefore = target.querySelectorAll('[aria-label="your hand"] button').length
+        const handTilesBefore = target.querySelectorAll('[aria-label="your hand"] button').length
 
-    // The player taps his only claim — and loses the window to West's pon: rules-
-    // correct atamahane/priority (pon precedes chi), but nothing in the rendered
-    // output says so.
-    firstCalls[0]!.click()
-    flushSync()
+        // The player taps his only claim — and loses the window to West's pon: rules-
+        // correct atamahane/priority (pon precedes chi), but nothing in the rendered
+        // output says so.
+        firstCalls[0]!.click()
+        flushSync()
 
-    // The window closed (the prompt is gone — settleWindow resolved to SOMETHING),
-    // and the fold went to West, not the player: West holds a fresh meld and
-    // North's discard wears the claimed mark, while the player's own hand is
-    // untouched.
-    expect(claimPrompt(target)).toBeNull()
-    expect(target.querySelectorAll('[aria-label="your hand"] button')).toHaveLength(
-      handTilesBefore,
-    )
-    const westMelds = target.querySelector('[aria-label="west melds"]')
-    expect(westMelds).not.toBeNull()
-    expect(westMelds!.querySelector('[aria-label="claimed 8m from north"]')).not.toBeNull()
-    // FIXED (T-011-02-01): the lost tap now names what happened — an outcome
-    // notice (App.svelte's `notice` state, drive.ts's windowOutcome) says who took
-    // the window and with what, and what the player's own tap was.
-    const notice = target.querySelector('.notice')
-    expect(notice).not.toBeNull()
-    expect(notice!.querySelector('[aria-label="winner"]')!.textContent).toBe('West')
-    expect(notice!.querySelector('[aria-label="winning call"]')!.textContent).toBe('pon')
-    expect(notice!.querySelector('[aria-label="your call"]')!.textContent).toBe('chi')
+        // The window closed (the prompt is gone — settleWindow resolved to SOMETHING),
+        // and the fold went to West, not the player: West holds a fresh meld and
+        // North's discard wears the claimed mark, while the player's own hand is
+        // untouched.
+        expect(claimPrompt(target)).toBeNull()
+        expect(target.querySelectorAll('[aria-label="your hand"] button')).toHaveLength(
+          handTilesBefore,
+        )
+        const westMelds = target.querySelector('[aria-label="west melds"]')
+        expect(westMelds).not.toBeNull()
+        expect(westMelds!.querySelector('[aria-label="claimed 8m from north"]')).not.toBeNull()
+        // FIXED (T-011-02-01): the lost tap now names what happened — an outcome
+        // notice (App.svelte's `notice` state, drive.ts's windowOutcome) says who
+        // took the window and with what, and what the player's own tap was — in the
+        // active terminology (T-011-02-03: read off windTerm/callTerm, not
+        // hardcoded English).
+        const notice = target.querySelector('.notice')
+        expect(notice).not.toBeNull()
+        expect(notice!.querySelector('[aria-label="winner"]')!.textContent).toBe(windTerm(2))
+        expect(notice!.querySelector('[aria-label="winning call"]')!.textContent).toBe(
+          callTerm('pon'),
+        )
+        expect(notice!.querySelector('[aria-label="your call"]')!.textContent).toBe(
+          callTerm('chi'),
+        )
 
-    // West owes its claim discard, North draws and discards next — and THAT
-    // discard opens a second window for the player: same call type (chi), same
-    // one-button layout, no distinguishing marker from the first prompt at all.
-    // Frozen (mined): this reopening takes exactly 3 forced ticks (West's claim
-    // discard, North's draw, North's discard) — well inside the epic's own
-    // "~250ms later" description of the report.
-    const ticks = await tickUntil(target, () => claimPrompt(target) !== null, 6)
-    expect(ticks).toBe(3)
+        // West owes its claim discard, North draws and discards next — and THAT
+        // discard opens a second window for the player: same call type (chi), same
+        // one-button layout, no distinguishing marker from the first prompt at all.
+        // Frozen (mined): this reopening takes exactly 3 forced ticks (West's claim
+        // discard, North's draw, North's discard) — well inside the epic's own
+        // "~250ms later" description of the report.
+        const ticks = await tickUntil(target, () => claimPrompt(target) !== null, 6)
+        expect(ticks).toBe(3)
 
-    const secondPromptNode = claimPrompt(target)!
-    const secondCalls = callButtons(target)
-    expect(secondCalls).toHaveLength(1)
-    expect(secondCalls[0]!.getAttribute('aria-label')).toBe('chi 2s with 3s 4s')
+        const secondPromptNode = claimPrompt(target)!
+        const secondCalls = callButtons(target)
+        expect(secondCalls).toHaveLength(1)
+        expect(secondCalls[0]!.getAttribute('aria-label')).toBe(`${callTerm('chi')} 2s with 3s 4s`)
 
-    // FIXED (T-011-02-02): the shared aria-label SHAPE and className are expected
-    // chrome for two same-call-type windows, not a defect — what actually matters
-    // is that the second prompt is a genuinely fresh mount, never the first prompt
-    // patched in place. App.svelte keys the console's ClaimPrompt on the window's
-    // own claimable seat+tile, so a new window always tears down the old DOM and
-    // mounts a new one — which is what lets the CSS entry beat (ClaimPrompt.svelte,
-    // @starting-style, 200ms, prefers-reduced-motion-gated) restart on every
-    // window. `isConnected` is the fact a same-node patch cannot produce: a patch
-    // leaves the original node attached with updated attributes; a remount detaches
-    // it before the new node exists.
-    expect(secondPromptNode.getAttribute('aria-label')).toBe(
-      firstPromptNode.getAttribute('aria-label'),
-    )
-    expect(secondPromptNode.className).toBe(firstPromptNode.className)
-    expect(secondPromptNode).not.toBe(firstPromptNode)
-    expect(firstPromptNode.isConnected).toBe(false)
+        // FIXED (T-011-02-02): the shared aria-label SHAPE and className are expected
+        // chrome for two same-call-type windows, not a defect — what actually matters
+        // is that the second prompt is a genuinely fresh mount, never the first prompt
+        // patched in place. App.svelte keys the console's ClaimPrompt on the window's
+        // own claimable seat+tile, so a new window always tears down the old DOM and
+        // mounts a new one — which is what lets the CSS entry beat (ClaimPrompt.svelte,
+        // @starting-style, 200ms, prefers-reduced-motion-gated) restart on every
+        // window. `isConnected` is the fact a same-node patch cannot produce: a patch
+        // leaves the original node attached with updated attributes; a remount detaches
+        // it before the new node exists.
+        expect(secondPromptNode.getAttribute('aria-label')).toBe(
+          firstPromptNode.getAttribute('aria-label'),
+        )
+        expect(secondPromptNode.className).toBe(firstPromptNode.className)
+        expect(secondPromptNode).not.toBe(firstPromptNode)
+        expect(firstPromptNode.isConnected).toBe(false)
 
-    // Cascade priority (T-011-02-01, App.svelte: claim prompt > outcome notice >
-    // riichi prompt > hint): the first window's notice has a 2000ms readable beat
-    // (App.svelte's NOTICE_DURATION_MS) — comfortably longer than the 750ms this
-    // reopen took — so it is still logically live right now. The console shows the
-    // fresh claim prompt anyway: a live decision always preempts a still-showing
-    // notice, never the reverse.
-    expect(target.querySelector('.notice')).toBeNull()
-  }, 20_000)
-})
+        // Cascade priority (T-011-02-01, App.svelte: claim prompt > outcome notice >
+        // riichi prompt > hint): the first window's notice has a 2000ms readable beat
+        // (App.svelte's NOTICE_DURATION_MS) — comfortably longer than the 750ms this
+        // reopen took — so it is still logically live right now. The console shows the
+        // fresh claim prompt anyway: a live decision always preempts a still-showing
+        // notice, never the reverse.
+        expect(target.querySelector('.notice')).toBeNull()
+      }, 20_000)
+    })
+  })
+}

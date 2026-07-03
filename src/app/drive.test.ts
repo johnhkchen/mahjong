@@ -538,6 +538,29 @@ describe('windowOutcome', () => {
     const ron = winChoice(offered, PLAYER)!
     expect(windowOutcome(ron, null)).toBeNull()
   })
+
+  // T-011-02-03: the two remaining named call-type combinations (the epic's own
+  // "chi/pon/ron" AC wording) — chi-loses-to-pon is already covered above (seed 3).
+  it("names South and ron as the winner when the player's tapped pon loses — mined game seed 2654435812 (core seed 85)", () => {
+    // Verbatim the two HandAction values window-outcome-notice.tap.svelte.test.ts's
+    // own "the pon/ron window ends the hand" fixture actually produces at its
+    // 78-action mark (cross-checked, not independently invented) — South's ron on
+    // 3s (tile 82) outranks the player's pon [83, 80] on the same tile.
+    const chosen: HandAction = { type: 'pon', seat: PLAYER, tile: 82, uses: [83, 80] }
+    const settled: HandAction = { type: 'ron', seat: 1, tile: 82 }
+    expect(windowOutcome(chosen, settled)).toEqual({ winner: 1, winnerType: 'ron', playerType: 'pon' })
+  })
+
+  it("names the winner as ron when the player's own tapped ron loses the atamahane (head-bump) — synthetic, no fixture", () => {
+    // windowOutcome is a pure comparison of two already-built HandAction values
+    // (see its own header) — it never touches the fold, so this is a legitimate,
+    // fixture-free unit case for the one combination this ticket does NOT mine an
+    // interactive fixture for (design.md Decision 5): two simultaneous ron offers
+    // on the same discard, the player's own not the earliest in rotation order.
+    const chosen: HandAction = { type: 'ron', seat: PLAYER, tile: 55 }
+    const settled: HandAction = { type: 'ron', seat: 2, tile: 55 }
+    expect(windowOutcome(chosen, settled)).toEqual({ winner: 2, winnerType: 'ron', playerType: 'ron' })
+  })
 })
 
 describe('winChoice', () => {
