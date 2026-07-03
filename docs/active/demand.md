@@ -25,6 +25,13 @@ and off this board.
   hand's value inline. _(advances P2)_
 - **Safe-tile / defense hints** — after an opponent's riichi, highlight genbutsu and suji so a
   learner can fold on purpose. _(advances P2)_
+- **"Why can't I win?" legibility** — owner playtest (2026-07-03): rons were withheld with no
+  explanation, reading as bugs. Surface the two silent gates at the moment they bite: a furiten
+  indicator ("you discarded X — ron is sealed until your next draw/turn; tsumo still wins") and
+  a yakuless-hand warning ("no yaku — this hand can only win by tsumo / needs riichi"). The
+  engine already knows both (`legal.ts` furiten + one-yaku gates); this is pure teaching UI.
+  Riichi (separate signal) is the mechanic that makes closed rons broadly reachable at all.
+  _(advances P2)_
 - **Post-hand review** — replay the finished hand with engine notes ("tenpai here, pushed into a
   riichi"), free off the record + engine peripheral. _(advances P2, P5)_
 
