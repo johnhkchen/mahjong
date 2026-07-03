@@ -739,6 +739,64 @@ function applyRon(
 }
 
 /**
+ * The shared discard mechanics: the mustDiscard/tsumogiri/tedashi three-arm mutation plus
+ * the shared phase/turn/claimable tail — extracted so the ordinary `discard` step and the
+ * riichi step (T-009-01-01: a riichi declaration performs exactly this discard, atomically,
+ * after its own legality guards) can never drift apart. `verb` names the acting form in
+ * every thrown message ('discard' or 'riichi') so error text stays exact per caller; `seat`
+ * is trusted to already equal `state.turn` (each caller's own turn guard runs first, with
+ * its own message — this function assumes, never re-derives, whose turn it is).
+ */
+function performDiscard(
+  state: TableState,
+  seat: Seat,
+  tile: TileId,
+  index: number,
+  verb: string,
+): void {
+  if (state.mustDiscard) {
+    // The claim discard: there is no drawn tile — the tile must come from the hand.
+    const hand = state.hands[seat]
+    const at = hand.indexOf(tile)
+    if (at === -1) {
+      throw new RangeError(
+        `action ${index}: ${verb} of tile ${tile}, which seat ${seat} does not hold — a claim discard comes from the hand`,
+      )
+    }
+    hand.splice(at, 1)
+    state.ponds[seat].push(tile)
+    state.mustDiscard = false
+  } else if (state.drawn === null) {
+    throw new RangeError(`action ${index}: ${verb} of tile ${tile} before seat ${seat} drew`)
+  } else if (tile === state.drawn) {
+    state.ponds[seat].push(tile)
+    state.drawn = null
+    state.drawnFrom = null
+  } else {
+    const hand = state.hands[seat]
+    const at = hand.indexOf(tile)
+    if (at === -1) {
+      throw new RangeError(
+        `action ${index}: ${verb} of tile ${tile}, which seat ${seat} neither holds nor just drew`,
+      )
+    }
+    hand.splice(at, 1)
+    hand.push(state.drawn)
+    state.ponds[seat].push(tile)
+    state.drawn = null
+    state.drawnFrom = null
+  }
+  if (state.live.length === 0) {
+    state.phase = 'ryuukyoku'
+  } else {
+    state.turn = ((seat + 1) % SEAT_COUNT) as Seat
+    // The discard just made is fresh: open the claim window on it. An ended
+    // hand keeps no window (the last discard is never chi/pon-able).
+    state.claimable = { seat, tile }
+  }
+}
+
+/**
  * The per-action step: advance the fold-local state by one logged action, mutating it
  * in place (every array in `state` is fresh to this fold, so the mutation is invisible
  * outside foldRecord). The turn cycle it enforces:
@@ -817,48 +875,7 @@ function applyAction(state: TableState, action: HandAction, index: number): void
           `action ${index}: discard by seat ${action.seat}, but it is seat ${state.turn}'s turn`,
         )
       }
-      if (state.mustDiscard) {
-        // The claim discard: there is no drawn tile — the tile must come from the hand.
-        const hand = state.hands[state.turn]
-        const at = hand.indexOf(action.tile)
-        if (at === -1) {
-          throw new RangeError(
-            `action ${index}: discard of tile ${action.tile}, which seat ${state.turn} does not hold — a claim discard comes from the hand`,
-          )
-        }
-        hand.splice(at, 1)
-        state.ponds[state.turn].push(action.tile)
-        state.mustDiscard = false
-      } else if (state.drawn === null) {
-        throw new RangeError(
-          `action ${index}: discard of tile ${action.tile} before seat ${state.turn} drew`,
-        )
-      } else if (action.tile === state.drawn) {
-        state.ponds[state.turn].push(action.tile)
-        state.drawn = null
-        state.drawnFrom = null
-      } else {
-        const hand = state.hands[state.turn]
-        const at = hand.indexOf(action.tile)
-        if (at === -1) {
-          throw new RangeError(
-            `action ${index}: discard of tile ${action.tile}, which seat ${state.turn} neither holds nor just drew`,
-          )
-        }
-        hand.splice(at, 1)
-        hand.push(state.drawn)
-        state.ponds[state.turn].push(action.tile)
-        state.drawn = null
-        state.drawnFrom = null
-      }
-      if (state.live.length === 0) {
-        state.phase = 'ryuukyoku'
-      } else {
-        state.turn = ((state.turn + 1) % SEAT_COUNT) as Seat
-        // The discard just made is fresh: open the claim window on it. An ended
-        // hand keeps no window (the last discard is never chi/pon-able).
-        state.claimable = { seat: action.seat, tile: action.tile }
-      }
+      performDiscard(state, action.seat, action.tile, index, 'discard')
       return
     }
     case 'chi':
