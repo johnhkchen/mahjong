@@ -63,11 +63,16 @@ const ACTION_BOUND = 2 * FULL_TURNS + 2 * MAX_MELDS + 2
  */
 const CHOICE_MAX = 19
 
-/** The call vocabulary — chi/pon/kan forms; wins are ends, not calls. */
+/**
+ * The call vocabulary — chi/pon/kan forms; wins are ends, not calls, and riichi
+ * (T-009-01-01) is a declare-and-DISCARD, not a call — excluded here so playGreedy's
+ * call-density corpus never mistakes a tenpai-preserving discard for a claim.
+ */
 function isCall(action: HandAction): boolean {
   return (
     action.type !== 'draw' &&
     action.type !== 'discard' &&
+    action.type !== 'riichi' &&
     action.type !== 'tsumo' &&
     action.type !== 'ron'
   )
@@ -183,17 +188,20 @@ function playWinEager(seed: number): HandRecord {
 }
 
 /**
- * The win carriers: every seed in the contiguous scan range 0..999 whose
- * win-eager game ends in agari — mined by this ticket's scratchpad scan (the
- * frozen-anchor convention: never regenerate). Eight carriers per thousand IS the
- * share of random-legal games that reach a win at all; 876 and 950 end in tsumo
- * (both tanyao), the other six in window rons (yakuhai and tanyao wins, winners
- * across seats 0/1/2, ends from action 21 to 161 — several mid-wall). A carrier
- * stranded in ryuukyoku by a trajectory-shifting engine change is the coverage
- * test below failing AS DESIGNED — re-mine with the scratchpad scan rather than
- * hand-patching seeds.
+ * The win carriers: seeds whose win-eager game ends in agari — mined by a
+ * scratchpad scan (the frozen-anchor convention: never regenerate). RE-MINED for
+ * T-009-01-01: riichi offers now sit in the offered set playWinEager samples
+ * uniformly by index, which is a real, expected trajectory shift (legal.ts's own
+ * doc-comment names this — inserting an offer block shifts every index after
+ * it) — two of the original eight carriers (seeds 100, 731) now land in
+ * ryuukyoku instead under the new offer set, so this list swaps them for two
+ * freshly-mined replacements (1072, 1268) and keeps the rest. 876, 950, and 1072
+ * end in tsumo; the other five in window rons — winners across seats 0/1/2/3,
+ * ends from action 24 to 161. A carrier stranded in ryuukyoku by a future
+ * trajectory-shifting engine change is the coverage test below failing AS
+ * DESIGNED — re-mine with the scratchpad scan rather than hand-patching seeds.
  */
-const WIN_CARRIER_SEEDS: readonly number[] = [100, 277, 360, 626, 731, 834, 876, 950]
+const WIN_CARRIER_SEEDS: readonly number[] = [277, 360, 626, 834, 876, 950, 1072, 1268]
 const winCorpus: readonly HandRecord[] = WIN_CARRIER_SEEDS.map((seed) => playWinEager(seed))
 
 /**

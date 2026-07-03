@@ -86,6 +86,7 @@ function isCall(action: HandAction): boolean {
   return (
     action.type !== 'draw' &&
     action.type !== 'discard' &&
+    action.type !== 'riichi' &&
     action.type !== 'tsumo' &&
     action.type !== 'ron'
   )
@@ -151,11 +152,12 @@ const GREEDY_SEEDS: readonly number[] = [0, 1, 2, 63, 67, 69]
 const greedyCorpus: readonly HandRecord[] = GREEDY_SEEDS.map((seed) => playGreedy(seed))
 
 /**
- * The pinned win carriers (dynamics.test.ts frozen anchors — never regenerate here):
- * win-eager games for these seeds end in agari; 876 and 950 in tsumo, the rest in
- * window rons, winners across seats 0/1/2.
+ * The pinned win carriers (dynamics.test.ts frozen anchors — never regenerate here;
+ * re-mined there for T-009-01-01, mirrored verbatim): win-eager games for these
+ * seeds end in agari; 876, 950, and 1072 in tsumo, the rest in window rons,
+ * winners across seats 0/1/2/3.
  */
-const WIN_CARRIER_SEEDS: readonly number[] = [100, 277, 360, 626, 731, 834, 876, 950]
+const WIN_CARRIER_SEEDS: readonly number[] = [277, 360, 626, 834, 876, 950, 1072, 1268]
 const winCorpus: readonly HandRecord[] = WIN_CARRIER_SEEDS.map((seed) => playWinEager(seed))
 
 // ---------------------------------------------------------------------------

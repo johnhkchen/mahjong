@@ -19,6 +19,7 @@ import {
   buildWall,
   dealHands,
   foldRecord,
+  kindOf,
   legalActions,
   partitionWall,
   type HandAction,
@@ -433,6 +434,66 @@ describe('offered actions fold', () => {
         ).not.toThrow()
       }
     }
+  })
+})
+
+describe('riichi offers (T-009-01-01)', () => {
+  // Mined fixture (record.test.ts's own — cross-checked against shanten directly):
+  // East's freshly dealt hand plus its first draw is tenpai-preserving on exactly
+  // two discards, 55 (5p) and 125 (5z); every other tile leaves shanten 1. Never
+  // regenerate.
+  const RIICHI_SEED = 100
+  const riichiPrefix: readonly HandAction[] = [{ type: 'draw', seat: 0 }]
+  const RIICHI: HandAction = { type: 'riichi', seat: 0, tile: 55 }
+
+  /** East declares riichi, then `turns` further tsumogiri turns cycle S→W→N→E→... */
+  function riichiThenTsumogiri(turns: number): HandAction[] {
+    let actions: HandAction[] = [...riichiPrefix, RIICHI]
+    for (let i = 0; i < turns; i++) {
+      const seat = foldRecord({ seed: RIICHI_SEED, actions }).turn
+      actions = [...actions, { type: 'draw', seat }]
+      const drawn = foldRecord({ seed: RIICHI_SEED, actions }).drawn!
+      actions = [...actions, { type: 'discard', seat, tile: drawn }]
+    }
+    return actions
+  }
+
+  it('riichi offers sit alongside every unchanged plain discard offer, one per tenpai-preserving tile', () => {
+    const state = foldRecord({ seed: RIICHI_SEED, actions: riichiPrefix })
+    const offered = legalActions(state)
+    const discardTiles = offered.filter((a) => a.type === 'discard').map((a) => a.tile)
+    const riichiTiles = offered
+      .filter((a) => a.type === 'riichi')
+      .map((a) => (a as Extract<HandAction, { type: 'riichi' }>).tile)
+      .sort((a, b) => a - b)
+    // A bot ignorant of riichi still sees exactly the discards it always saw.
+    expect(discardTiles).toEqual([...state.hands[0], state.drawn])
+    expect(riichiTiles).toEqual([55, 125])
+  })
+
+  it('a locked seat offers only its drawn-tile discard and its tsumo — no hand discards, no further riichi, no kan', () => {
+    // Three tsumogiri turns (S, W, N) cycle back to East's own turn; one more
+    // draw (no discard yet) reaches East's next post-lock decision point.
+    const actions = [...riichiThenTsumogiri(3), { type: 'draw', seat: 0 } as HandAction]
+    const state = foldRecord({ seed: RIICHI_SEED, actions })
+    expect(state.turn).toBe(0)
+    expect(state.riichi[0]).toBe(true)
+    expect(state.drawn).not.toBeNull()
+    const offered = legalActions(state)
+    expect(offered).toEqual([{ type: 'discard', seat: 0, tile: state.drawn }])
+  })
+
+  it('a locked seat’s claim offers vanish even when it holds a matching pair — ron stays independent of the lock', () => {
+    // Mined (scratchpad scan continuing riichiThenTsumogiri): at turn 46, South
+    // discards 45 (3p) while East's locked hand still holds two other 3p copies
+    // (46, 47) — a pon precondition (copiesInHand >= 2) that the lock alone
+    // suppresses. Never regenerate the turn count.
+    const actions = riichiThenTsumogiri(46)
+    const state = foldRecord({ seed: RIICHI_SEED, actions })
+    expect(state.claimable).toEqual({ seat: 2, tile: 45 })
+    expect(state.hands[0].filter((t) => kindOf(t) === kindOf(45)).length).toBe(2)
+    const offered = legalActions(state)
+    expect(offered.some((a) => a.seat === 0 && a.type !== 'ron' && a.type !== 'draw')).toBe(false)
   })
 })
 

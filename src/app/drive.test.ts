@@ -499,11 +499,15 @@ describe('settleWindow', () => {
 })
 
 describe('winChoice', () => {
-  it('returns the tsumo offer itself at the tsumo point — offered index 14, behind the discards', () => {
+  it('returns the tsumo offer itself at the tsumo point — offered index 28, behind the discards and riichi offers', () => {
     const offered = legalActions(tsumoPoint)
     const win = winChoice(offered, PLAYER)
     // toBe, not toEqual: the choice IS legalActions output, never a lookalike.
-    expect(win).toBe(offered[14])
+    // T-009-01-01: every one of the 14 discard candidates here also leaves this
+    // hand at tenpai, so 14 riichi offers now sit between the discards and the
+    // win (14 discards + 14 riichi + the win, index 28) — re-verified against
+    // legalActions directly, not hand-derived; never regenerate by hand.
+    expect(win).toBe(offered[28])
     expect(win).toEqual({ type: 'tsumo', seat: PLAYER })
   })
 

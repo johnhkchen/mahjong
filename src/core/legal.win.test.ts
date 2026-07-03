@@ -160,8 +160,12 @@ describe('tsumo offers', () => {
     expect(state.drawn).toBe(85)
     expect(state.drawnFrom).toBe('wall')
     const offered = legalActions(state)
-    expect(offered[14]).toEqual({ type: 'tsumo', seat: 3 })
-    expect(offered).toHaveLength(15) // 14 discards + the win; no kan material
+    // T-009-01-01: every one of the 14 discard candidates also leaves this hand
+    // at tenpai, so a riichi offer follows each discard before the win — 14
+    // discards + 14 riichi offers + the win (mined/re-verified against
+    // riichiOffers directly at capture time; never regenerate by hand).
+    expect(offered[28]).toEqual({ type: 'tsumo', seat: 3 })
+    expect(offered).toHaveLength(29) // 14 discards + 14 riichi + the win; no kan material
   })
 
   it('offered on a completing rinshan replacement — drawnFrom is the source', () => {
@@ -169,8 +173,10 @@ describe('tsumo offers', () => {
     expect(state.drawn).toBe(22)
     expect(state.drawnFrom).toBe('rinshan')
     const offered = legalActions(state)
-    // Ten hand tiles after the ankan → 11 discards, then the win.
-    expect(offered[11]).toEqual({ type: 'tsumo', seat: 1 })
+    // Ten hand tiles after the ankan → 11 discards, then (T-009-01-01) 11
+    // riichi offers (every discard candidate here also leaves tenpai), then
+    // the win.
+    expect(offered[22]).toEqual({ type: 'tsumo', seat: 1 })
   })
 
   it('not offered one turn earlier: the same seat’s non-completing draw carries no win', () => {

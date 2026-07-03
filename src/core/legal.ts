@@ -25,11 +25,12 @@
 
 import { kindOf, rankOf, suitOf, type TileId, type TileKind } from './tiles'
 import { SEAT_COUNT, type Seat } from './deal'
-import type { HandAction, TableState } from './record'
+import { RIICHI_STICK, type HandAction, type Meld, type TableState } from './record'
 import { isAgari } from './agari'
 import { waits } from './waits'
 import { yakuOf, type WinYakuName } from './yakuman'
 import type { WindKind } from './yaku'
+import { shanten } from './shanten'
 
 /** The held copies of one kind, in hand order — the canonical `uses` source. */
 function copiesInHand(hand: readonly TileId[], kind: TileKind): TileId[] {
@@ -45,6 +46,17 @@ function copiesInHand(hand: readonly TileId[], kind: TileKind): TileId[] {
  */
 function kanAllowed(state: TableState): boolean {
   return state.doraIndicators.length - 1 < 4 && state.live.length > 0
+}
+
+/**
+ * A hand is closed (menzen) iff its only melds are ankan — calls open it. The
+ * fifth copy of this exact predicate in this codebase (yaku.ts/han.ts/fu.ts/
+ * record.ts already each restate it independently); riichiOffers' own closed-
+ * hand gate follows the same established duplication convention, per this
+ * module's own header ("nothing here imports record.ts guard logic").
+ */
+function isMenzen(melds: readonly Meld[]): boolean {
+  return melds.every((meld) => meld.type === 'ankan')
 }
 
 /**
@@ -140,6 +152,37 @@ function tsumoOffer(state: TableState): HandAction[] {
 }
 
 /**
+ * The turn seat's riichi offers at a post-draw point — one per candidate discard
+ * tile (the same 14-candidate set the ordinary discard offers iterate: the 13
+ * hand tiles plus the drawn tile) whose removal leaves the 13-tile hand at
+ * tenpai (shanten 0). Re-states record.ts's applyRiichi guards independently,
+ * per this module's own doctrine — never already locked, hand closed
+ * (isMenzen), starting score at least the stick, and the live wall not already
+ * exhausted; only the per-tile tenpai probe varies across candidates, so those
+ * seat-wide gates are checked once before the loop. Zero offers is the ordinary
+ * case (most discard points are not tenpai-preserving at all); more than one is
+ * possible when several tiles each leave a genuinely different tenpai shape.
+ */
+function riichiOffers(state: TableState): HandAction[] {
+  const seat = state.turn
+  if (state.riichi[seat]) return []
+  if (!isMenzen(state.melds[seat])) return []
+  if (state.scoresIn[seat] < RIICHI_STICK) return []
+  if (state.live.length === 0) return []
+  const hand = state.hands[seat]
+  const drawn = state.drawn!
+  const candidates = [...hand, drawn]
+  const offers: HandAction[] = []
+  for (const tile of candidates) {
+    const remaining = candidates.filter((t) => t !== tile)
+    if (shanten(remaining.map(kindOf), state.melds[seat]) === 0) {
+      offers.push({ type: 'riichi', seat, tile })
+    }
+  }
+  return offers
+}
+
+/**
  * The claim offers on an open claim window, in the frozen order: all pons, then all
  * daiminkans, then all chis (claim precedence made positional — pon/kan outrank chi).
  * Candidate seats scan in rotation order from the discarder's right; the physical
@@ -157,6 +200,7 @@ function claimOffers(state: TableState): HandAction[] {
   const offers: HandAction[] = []
   for (let k = 1; k < SEAT_COUNT; k++) {
     const seat = ((window.seat + k) % SEAT_COUNT) as Seat
+    if (state.riichi[seat]) continue // T-009-01-01: a locked seat makes no calls
     const copies = copiesInHand(state.hands[seat], kind)
     for (let i = 0; i < copies.length; i++) {
       for (let j = i + 1; j < copies.length; j++) {
@@ -167,6 +211,7 @@ function claimOffers(state: TableState): HandAction[] {
   if (kanAllowed(state)) {
     for (let k = 1; k < SEAT_COUNT; k++) {
       const seat = ((window.seat + k) % SEAT_COUNT) as Seat
+      if (state.riichi[seat]) continue // T-009-01-01: a locked seat makes no calls
       const copies = copiesInHand(state.hands[seat], kind)
       if (copies.length === 3) {
         offers.push({
@@ -181,16 +226,21 @@ function claimOffers(state: TableState): HandAction[] {
   const rank = rankOf(kind)
   if (rank !== null) {
     const seat = ((window.seat + 1) % SEAT_COUNT) as Seat
-    const suit = suitOf(kind)
-    const hand = state.hands[seat]
-    for (let low = rank - 2; low <= rank; low++) {
-      if (low < 1 || low + 2 > 9) continue
-      const needed = [low, low + 1, low + 2].filter((r) => r !== rank)
-      const lowCopies = copiesInHand(hand, `${needed[0]}${suit}` as TileKind)
-      const highCopies = copiesInHand(hand, `${needed[1]}${suit}` as TileKind)
-      for (const lowTile of lowCopies) {
-        for (const highTile of highCopies) {
-          offers.push({ type: 'chi', seat, tile: window.tile, uses: [lowTile, highTile] })
+    if (!state.riichi[seat]) {
+      // T-009-01-01: a locked seat makes no calls (this loop only ever considers
+      // the one fixed chi-claimant seat, so the guard wraps the body rather than
+      // `continue`-ing past a loop).
+      const suit = suitOf(kind)
+      const hand = state.hands[seat]
+      for (let low = rank - 2; low <= rank; low++) {
+        if (low < 1 || low + 2 > 9) continue
+        const needed = [low, low + 1, low + 2].filter((r) => r !== rank)
+        const lowCopies = copiesInHand(hand, `${needed[0]}${suit}` as TileKind)
+        const highCopies = copiesInHand(hand, `${needed[1]}${suit}` as TileKind)
+        for (const lowTile of lowCopies) {
+          for (const highTile of highCopies) {
+            offers.push({ type: 'chi', seat, tile: window.tile, uses: [lowTile, highTile] })
+          }
         }
       }
     }
@@ -269,13 +319,23 @@ function shouminkanOffers(state: TableState): HandAction[] {
  *   always folds: live cannot be empty here, because the phase flips to ryuukyoku
  *   on the discard that empties the wall (documented, not guarded — states are
  *   trusted from foldRecord, per the TileId/seed precedent);
- * - drawn !== null → the turn seat's 14 discards: the 13 hand tiles in hand order
- *   (hands are draw-ordered and never sorted, so the order is stable), then the
- *   drawn tile last, mirroring the physical table where the draw is held apart;
- *   then its tsumo offer if the drawn tile completes a yaku-bearing hand (the win
- *   again preceding the calls — see tsumoOffer), then its ankan offers, then its
- *   shouminkan offers (kan forms only while a rinshan tile remains and the live
- *   wall is not empty — see kanAllowed).
+ * - drawn !== null, seat LOCKED (T-009-01-01: state.riichi[seat]) → exactly two
+ *   offers survive the lock: the drawn-tile discard (forced tsumogiri — the 13
+ *   hand-tile discards, riichi offers, ankan, and shouminkan all vanish), then
+ *   its tsumo offer (a locked seat may still win). Claim offers on OTHER seats'
+ *   windows are gated separately, in claimOffers itself (ron stays available
+ *   there too — see ronOffers, untouched by the lock);
+ * - drawn !== null, seat unlocked → the turn seat's 14 discards: the 13 hand
+ *   tiles in hand order (hands are draw-ordered and never sorted, so the order
+ *   is stable), then the drawn tile last, mirroring the physical table where
+ *   the draw is held apart; then its riichi offers, one per candidate discard
+ *   that leaves the hand at tenpai (T-009-01-01: see riichiOffers — inserted
+ *   here, between the discard prefix and the win offer, per this comment's own
+ *   extend-only promise below); then its tsumo offer if the drawn tile
+ *   completes a yaku-bearing hand (the win again preceding the calls — see
+ *   tsumoOffer), then its ankan offers, then its shouminkan offers (kan forms
+ *   only while a rinshan tile remains and the live wall is not empty — see
+ *   kanAllowed).
  *
  * Pure read: never mutates the state; returns a fresh array of fresh action
  * literals (fresh `uses` tuples included) per call, so no caller can corrupt a fold
@@ -283,9 +343,10 @@ function shouminkanOffers(state: TableState): HandAction[] {
  *
  * Extend-only, like the action vocabulary it mirrors: riichi tickets grow this
  * enumeration (and this module); existing offerings never change shape, and the
- * draw-first / 14-discard-prefix positions stay stable. (This ticket shifted the
- * claim-block and kan-block indices by inserting the win offers ahead of them —
- * within the promise, which froze only those two positions.)
+ * draw-first / 14-discard-prefix positions stay stable. (An earlier ticket shifted
+ * the claim-block and kan-block indices by inserting the win offers ahead of them,
+ * within this same promise; T-009-01-01 shifts the tsumo/ankan/shouminkan indices
+ * again by inserting riichi offers just ahead of them, for the identical reason.)
  */
 export function legalActions(state: TableState): HandAction[] {
   if (state.phase === 'agari') return []
@@ -306,9 +367,16 @@ export function legalActions(state: TableState): HandAction[] {
     return offers
   }
   const drawn = state.drawn
+  if (state.riichi[seat]) {
+    // T-009-01-01: a locked seat is forced tsumogiri (its only discard offer is
+    // the drawn tile) and may make no further declaration or kan — only its win
+    // offer survives the lock.
+    return [{ type: 'discard', seat, tile: drawn }, ...tsumoOffer(state)]
+  }
   return [
     ...state.hands[seat].map((tile): HandAction => ({ type: 'discard', seat, tile })),
     { type: 'discard', seat, tile: drawn },
+    ...riichiOffers(state),
     ...tsumoOffer(state),
     ...ankanOffers(state),
     ...shouminkanOffers(state),
