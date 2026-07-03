@@ -7,6 +7,7 @@
     promptChoices,
     tapClaim,
     tapDiscard,
+    winChoice,
     type ClaimChoice,
   } from './drive'
   import ClaimPrompt from './ClaimPrompt.svelte'
@@ -23,10 +24,18 @@
   let actions = $state<HandAction[]>([])
   const table = $derived(foldRecord({ seed, actions }))
   const offered = $derived(legalActions(table))
-  // The player's claim prompt list — deduped for presentation, non-empty exactly
-  // when forcedAction waits on the player's claim window, so the prompt shows
-  // precisely while the loop pauses (one predicate family in drive.ts).
+  // The player's claim prompt list — deduped for presentation — and his one win
+  // offer: together non-empty exactly when forcedAction waits on the player's
+  // window or win, so the prompt shows precisely while the loop pauses (one
+  // predicate family in drive.ts). The tsumo point is the family's tap-state
+  // member: the loop waits there for the discard choice regardless, and the win
+  // button simply joins the live tap surface.
   const prompt = $derived(promptChoices(offered, PLAYER))
+  const win = $derived(winChoice(offered, PLAYER))
+  // Houtei-only presentation state: declining a houtei ron has no action to append
+  // (the hand is already provisionally ended), so the pass tap just lowers the
+  // prompt. Never authoritative, never reset — a single hand ends there either way.
+  let dismissed = $state(false)
 
   // Pacing is presentation: one forced action per tick keeps ponds and the wall
   // counter landing visibly, action by action, instead of a whole bot round at once.
@@ -45,6 +54,11 @@
   function pass() {
     const action = passClaim(offered, PLAYER)
     if (action !== null) actions.push(action)
+    else dismissed = true // no draw to decline into — the houtei dismissal
+  }
+
+  function takeWin() {
+    if (win !== null) actions.push(win)
   }
 
   // The reactive fixed point that runs the table: each append re-folds and re-derives
@@ -65,10 +79,21 @@
 <main>
   <header>mahjong</header>
   <Table {table} ontap={tap} />
-  <!-- The claimable-window conjunct is a type guard, not policy: a claim offer
-       implies an open window; visibility is promptChoices alone. -->
-  {#if prompt.length > 0 && table.claimable !== null}
-    <ClaimPrompt claimed={table.claimable.tile} choices={prompt} onclaim={claim} onpass={pass} />
+  <!-- Visibility is the drive predicate family: claim choices or the win offer.
+       The claimed tile is the window's when one is open (a claim offer implies
+       one); the tsumo and houtei moments have none and the prompt renders
+       headerless. canPass hides the pass at the tsumo point only — declining a
+       tsumo IS tapping a discard on the table below. -->
+  {#if (prompt.length > 0 || win !== null) && !dismissed}
+    <ClaimPrompt
+      claimed={table.claimable?.tile ?? null}
+      choices={prompt}
+      {win}
+      canPass={win?.type !== 'tsumo'}
+      onclaim={claim}
+      onpass={pass}
+      onwin={takeWin}
+    />
   {/if}
 </main>
 
