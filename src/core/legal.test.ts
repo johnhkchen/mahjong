@@ -341,7 +341,7 @@ describe('the set is the closed form', () => {
     )
   })
 
-  it('post-draw: the 14 discards lead — hand order, drawn last; any tail is the turn seat’s tsumo then kans (property)', () => {
+  it('post-draw: the 14 discards lead — hand order, drawn last; any tail is riichi offers, then the turn seat’s tsumo, then kans (property)', () => {
     fc.assert(
       fc.property(seedArb, fc.integer({ min: 0, max: FULL_TURNS - 1 }), (seed, turns) => {
         const { actions } = tsumogiriRecord(seed, turns)
@@ -355,9 +355,19 @@ describe('the set is the closed form', () => {
         expect(offered.slice(0, discards.length)).toEqual(discards)
         expect(new Set(offered.map(keyOf)).size).toBe(offered.length)
         const tail = offered.slice(discards.length)
-        // At most one tsumo, and only at the head of the tail — the win precedes
-        // the kans, mirroring ron-before-pon in the window class.
-        for (const [i, action] of tail.entries()) {
+        // T-009-01-01: zero or more riichi offers lead the tail (skipped
+        // entirely for an already-locked seat, whose tail is at most a lone
+        // tsumo — see legalActions' locked-seat branch). Then, as before, at
+        // most one tsumo — only at the head of what follows — then kans; the
+        // win precedes the kans, mirroring ron-before-pon in the window class.
+        let riichiCount = 0
+        while (riichiCount < tail.length && tail[riichiCount].type === 'riichi') riichiCount++
+        for (const action of tail.slice(0, riichiCount)) {
+          expect(action.type).toBe('riichi')
+          expect(action.seat).toBe(state.turn)
+        }
+        const afterRiichi = tail.slice(riichiCount)
+        for (const [i, action] of afterRiichi.entries()) {
           expect(i === 0 ? ['tsumo', 'ankan', 'shouminkan'] : ['ankan', 'shouminkan']).toContain(
             action.type,
           )

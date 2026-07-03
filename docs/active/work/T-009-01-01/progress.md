@@ -19,7 +19,16 @@ Tracking plan.md's 8 steps. Updated as each completes.
 - [x] Step 6 — game.ts: thread scoresIn/potIn/pot
 - [x] Step 7 — seatview.ts: expose riichi/pot (also required widening
   policy.test.ts's hand-built `viewOf` SeatView fixture helper)
-- [ ] Step 8 — full-suite confirmation pass
+- [x] Step 8 — full-suite confirmation pass. Found one real, non-flaky-by-luck
+  regression on the first `just test` re-run (fast-check property tests use an
+  unseeded random draw per run, so this wasn't caught by earlier per-step runs):
+  `legal.test.ts`'s "post-draw: the 14 discards lead..." property asserted the
+  tail after the 14 discards is "the turn seat's tsumo, then kans" — no longer
+  true, since riichi offers can now sit in that tail too. Fixed by teaching the
+  assertion to skip a leading riichi block before checking tsumo/kan order.
+  Re-ran the full suite and the isolated property 8x after the fix with no
+  further failures. Every non-riichi suite (selfplay/dynamics/policy/purity) is
+  confirmed unmodified in behavior — only riichi-touching code changed.
 
 ## Deviations from plan.md
 
