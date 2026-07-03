@@ -20,6 +20,7 @@ import {
   promptChoices,
   tapClaim,
   tapDiscard,
+  winChoice,
 } from './drive'
 
 // The frozen anchor seed shared with the other suites (wall golden vector, App boot).
@@ -92,6 +93,63 @@ const mixedWindow15 = foldRecord({ seed: 15, actions: tsumogiriTurns(dealt15.liv
 const dealt212 = foldRecord({ seed: 212, actions: [] })
 const kanWindow212 = foldRecord({ seed: 212, actions: tsumogiriTurns(dealt212.live, 6) })
 const EAST_KAN_212 = { type: 'daiminkan', uses: [100, 102, 101] } as const
+
+// ——— Frozen win anchors (probe-mined like the claim windows, cross-checked at
+// capture against the derivation stack — isAgari/waits/yakuOf — never against
+// legalActions itself; never regenerate). Seat 0's dealt tenpai runs ~1/8000, so
+// the seeds are large. Under all-tsumogiri the 13-tile hand never changes, and
+// each anchor is its seed's FIRST win event, so nothing fires earlier.
+// Seed 542630 — EAST dealt tenpai, pinfu, waits 6p/9p; no wait kind surfaces in
+// live[0..31], so turn 32 — East's own draw live[32] = 69 (9p) — is the tsumo
+// point: offered at index 14 behind the 14 discards, yaku [menzen-tsumo, pinfu].
+// Seed 887141 — EAST dealt tenpai waiting 5m/8m with TWO 8m copies in hand: turn 3
+// (North tsumogiri live[3] = 31, 8m) opens a window offering East the ron AND the
+// pon [30, 28] AND eight chi variants (two shapes) — a win and claims in one
+// prompt, with EAST'S OWN draw at the head (the race geometry again, now with a
+// win at stake). The ron folds to yaku [pinfu, iipeikou].
+// Seed 362857 — EAST dealt tenpai waiting 5m (yakuhai-chun): turn 26 (West
+// tsumogiri live[26] = 19, 5m) opens a window whose offering is exactly
+// [draw seat 3, ron seat 0] — a ron-ONLY window behind a BOT's draw obligation:
+// the auto-pass regression anchor (a claim-only wait guard forces the head draw
+// here, silently passing the player's ron).
+// Seed 1038928 — houtei: the final discard (turn 69, South, live[69] = 21, 6m)
+// completes East's chiitoitsu — the ryuukyoku offering is exactly [ron seat 0]:
+// no draw at the head, nothing for a pass to build.
+const TSUMO_SEED = 542630
+const dealtTsumo = foldRecord({ seed: TSUMO_SEED, actions: [] })
+const tsumoPointPrefix: readonly HandAction[] = [
+  ...tsumogiriTurns(dealtTsumo.live, 32),
+  { type: 'draw', seat: 0 },
+]
+const tsumoPoint = foldRecord({ seed: TSUMO_SEED, actions: [...tsumoPointPrefix] })
+
+const SHANPON_SEED = 887141
+const dealtShanpon = foldRecord({ seed: SHANPON_SEED, actions: [] })
+const shanponPrefix: readonly HandAction[] = tsumogiriTurns(dealtShanpon.live, 4)
+const shanponWindow = foldRecord({ seed: SHANPON_SEED, actions: [...shanponPrefix] })
+
+const RON_ONLY_SEED = 362857
+const dealtRonOnly = foldRecord({ seed: RON_ONLY_SEED, actions: [] })
+const ronOnlyWindow = foldRecord({
+  seed: RON_ONLY_SEED,
+  actions: tsumogiriTurns(dealtRonOnly.live, 27),
+})
+
+const HOUTEI_SEED = 1038928
+const dealtHoutei = foldRecord({ seed: HOUTEI_SEED, actions: [] })
+const houteiEnd = foldRecord({ seed: HOUTEI_SEED, actions: tsumogiriTurns(dealtHoutei.live, 70) })
+
+// Core's own frozen bot-win anchors (legal.win.test.ts geometries), through the
+// player lens: seed 3951 turn 0 — seat 0 tsumogiris live[0] = 72 (1s) and SEAT 3
+// rons it; the window is real, but none of it is East's. Seed 23798 turn 20 — the
+// furiten anchor: seat 1's ron on the 9p window is withheld by the furiten gate.
+// Seed 12754 turn 1 — the yakuless anchor: seat 2's completion carries no yaku.
+function dealtLive(seed: number): readonly TileId[] {
+  return foldRecord({ seed, actions: [] }).live
+}
+const botRonWindow = foldRecord({ seed: 3951, actions: tsumogiriTurns(dealtLive(3951), 1) })
+const furitenWindow = foldRecord({ seed: 23798, actions: tsumogiriTurns(dealtLive(23798), 21) })
+const yakulessWindow = foldRecord({ seed: 12754, actions: tsumogiriTurns(dealtLive(12754), 2) })
 
 describe('claimChoices', () => {
   it("returns exactly the player's offers, elements of the offered array itself", () => {
@@ -271,6 +329,25 @@ describe('passClaim', () => {
     }
   })
 
+  it('returns the head draw when the player holds only a ron — declining a win is declining a claim', () => {
+    const offered = legalActions(ronOnlyWindow)
+    expect(claimChoices(offered, PLAYER)).toEqual([])
+    expect(passClaim(offered, PLAYER)).toBe(offered[0])
+    // And at the shanpon window, where the ron sits beside real claims — the same
+    // one head draw declines everything at once (East's own draw, the race shape).
+    const shanpon = legalActions(shanponWindow)
+    expect(shanpon[0]).toEqual({ type: 'draw', seat: 0 })
+    expect(passClaim(shanpon, PLAYER)).toBe(shanpon[0])
+  })
+
+  it('returns null at the win moments with no draw to decline into: tsumo point, houtei', () => {
+    // Declining a tsumo IS discarding — the tap surface is live, no pass exists.
+    expect(passClaim(legalActions(tsumoPoint), PLAYER)).toBeNull()
+    // A houtei offering has no draw at the head — nothing to build; the decline is
+    // the prompt owner's presentation fact, not an action.
+    expect(passClaim(legalActions(houteiEnd), PLAYER)).toBeNull()
+  })
+
   it('is complementary to forcedAction at every anchored state — exactly one driver applies', () => {
     const anchors = [
       dealt,
@@ -281,6 +358,13 @@ describe('passClaim', () => {
       ponWindow5,
       mixedWindow15,
       exhausted,
+      tsumoPoint,
+      shanponWindow,
+      ronOnlyWindow,
+      houteiEnd,
+      botRonWindow,
+      furitenWindow,
+      yakulessWindow,
     ]
     for (const state of anchors) {
       const offered = legalActions(state)
@@ -288,16 +372,106 @@ describe('passClaim', () => {
       const pass = passClaim(offered, PLAYER)
       // Never both: the loop cannot race the prompt.
       expect(forced === null || pass === null).toBe(true)
-      // The prompt waits ⇔ the player holds a claim offer.
-      expect(pass !== null).toBe(claimChoices(offered, PLAYER).length > 0)
-      // Both null only at the two tap/halt states: the player's discard, or the end.
+      // The pass exists ⇔ the player holds something to decline AND a head draw
+      // exists to decline into (wins joined claims in the predicate family).
+      const holds =
+        claimChoices(offered, PLAYER).length > 0 || winChoice(offered, PLAYER) !== null
+      expect(pass !== null).toBe(holds && offered[0]?.type === 'draw')
+      // Both null only at tap/halt states: the player's discard choice (the tsumo
+      // point included — its decline IS a discard tap), a ron-headed ryuukyoku
+      // offering (the player's houtei tap, or the bots resting), or the end.
       if (forced === null && pass === null) {
         const head = offered[0]
-        expect(head === undefined || (head.type === 'discard' && head.seat === PLAYER)).toBe(
-          true,
-        )
+        expect(
+          head === undefined ||
+            (head.type === 'discard' && head.seat === PLAYER) ||
+            head.type === 'ron',
+        ).toBe(true)
       }
     }
+  })
+})
+
+describe('winChoice', () => {
+  it('returns the tsumo offer itself at the tsumo point — offered index 14, behind the discards', () => {
+    const offered = legalActions(tsumoPoint)
+    const win = winChoice(offered, PLAYER)
+    // toBe, not toEqual: the choice IS legalActions output, never a lookalike.
+    expect(win).toBe(offered[14])
+    expect(win).toEqual({ type: 'tsumo', seat: PLAYER })
+  })
+
+  it('returns the ron itself at the ron-only window', () => {
+    const offered = legalActions(ronOnlyWindow)
+    expect(offered).toEqual([
+      { type: 'draw', seat: 3 },
+      { type: 'ron', seat: PLAYER, tile: 19 },
+    ])
+    expect(winChoice(offered, PLAYER)).toBe(offered[1])
+  })
+
+  it('returns the ron beside live claim offers — a win and calls in one window', () => {
+    const offered = legalActions(shanponWindow)
+    const win = winChoice(offered, PLAYER)
+    expect(win).toBe(offered[1]) // draw at the head, the ron right behind it
+    expect(win).toEqual({ type: 'ron', seat: PLAYER, tile: 31 })
+    // The claim family stays claims-only: the shanpon pon and the chis are there,
+    // the ron is NOT among them — the two selector families partition the offers.
+    const claims = claimChoices(offered, PLAYER)
+    expect(claims.length).toBeGreaterThan(0)
+    expect(claims.every((c) => c.type !== 'ron')).toBe(true)
+    expect(tapClaim(offered, PLAYER, { type: 'pon', uses: [30, 28] })).toBe(claims[0])
+  })
+
+  it('returns the houtei ron at a ryuukyoku offering', () => {
+    expect(houteiEnd.phase).toBe('ryuukyoku')
+    const offered = legalActions(houteiEnd)
+    expect(offered).toEqual([{ type: 'ron', seat: PLAYER, tile: 21 }])
+    expect(winChoice(offered, PLAYER)).toBe(offered[0])
+  })
+
+  it('is null for the player at every windowless and claim-only anchor', () => {
+    for (const state of [
+      dealt,
+      afterEastDraw,
+      beforeSouthDraw,
+      afterSouthDraw,
+      raceWindow3,
+      ponWindow5,
+      mixedWindow15,
+      kanWindow212,
+      exhausted,
+    ]) {
+      expect(winChoice(legalActions(state), PLAYER)).toBeNull()
+    }
+  })
+
+  it("is null for the player at a BOT's win window — seat-scoped, and the bot never takes it", () => {
+    const offered = legalActions(botRonWindow)
+    // The offer is real — for seat 3. Through the player lens there is nothing.
+    expect(winChoice(offered, 3)).toEqual({ type: 'ron', seat: 3, tile: 72 })
+    expect(winChoice(offered, PLAYER)).toBeNull()
+    // And the loop rolls past it: the bots' rons go stale like their calls.
+    expect(forcedAction(offered, PLAYER)).toBe(offered[0])
+  })
+
+  it('is null where core withholds the offer: furiten and yakuless completions', () => {
+    // Never when furiten: seat 1's 9p ron (seed 23798) completes with pinfu, but
+    // its own pond holds its 6p wait — no offer, so no prompt, on any seat's lens.
+    const furitenOffered = legalActions(furitenWindow)
+    expect(furitenOffered.some((a) => a.type === 'ron')).toBe(false)
+    expect(winChoice(furitenOffered, 1)).toBeNull()
+    // Never when yakuless: seat 2's completion (seed 12754) carries no yaku.
+    const yakulessOffered = legalActions(yakulessWindow)
+    expect(yakulessOffered.some((a) => a.type === 'ron')).toBe(false)
+    expect(winChoice(yakulessOffered, 2)).toBeNull()
+  })
+
+  it('rejects a win removed from a doctored list even though the fold would accept it', () => {
+    const doctored = legalActions(ronOnlyWindow).filter((a) => a.type !== 'ron')
+    expect(winChoice(doctored, PLAYER)).toBeNull()
+    // The legality is coming from nowhere but the list: the fold WOULD accept the
+    // ron (it is this anchor's whole point), but the seam can no longer build it.
   })
 })
 
@@ -391,6 +565,57 @@ describe('forcedAction', () => {
     expect(legalActions(exhausted)).toEqual([])
     expect(forcedAction([], PLAYER)).toBeNull()
   })
+
+  it("waits (null) at a ron-ONLY window behind a bot's draw — the auto-pass regression", () => {
+    // Seed 362857: no claim offer exists, so a claim-only wait guard sees a
+    // "bot-only" window and forces the head draw — silently passing the player's
+    // ron after the timer. The win guard is what makes this state wait.
+    const offered = legalActions(ronOnlyWindow)
+    expect(offered[0]).toEqual({ type: 'draw', seat: 3 })
+    expect(claimChoices(offered, PLAYER)).toEqual([])
+    expect(forcedAction(offered, PLAYER)).toBeNull()
+  })
+
+  it("waits (null) at the shanpon window — a win and claims behind the player's own draw", () => {
+    const offered = legalActions(shanponWindow)
+    expect(offered[0]).toEqual({ type: 'draw', seat: 0 })
+    expect(forcedAction(offered, PLAYER)).toBeNull()
+  })
+
+  it('waits (null) at the tsumo point — the discard choice and the win are both taps', () => {
+    expect(forcedAction(legalActions(tsumoPoint), PLAYER)).toBeNull()
+  })
+
+  it("waits (null) at the player's houtei; halts (null) at a bot's — neither is driven", () => {
+    // The player's: the guard owns it (rons-only offering, his among them).
+    expect(forcedAction(legalActions(houteiEnd), PLAYER)).toBeNull()
+    // A bot's: seed 147508 (core's houtei anchor, seat 3 wins) — no draw, no
+    // discard, nothing the player holds: the fallthrough halt. The bots pass
+    // their houtei rons and the hand rests at ryuukyoku.
+    const botHoutei = foldRecord({ seed: 147508, actions: tsumogiriTurns(dealtLive(147508), 70) })
+    expect(botHoutei.phase).toBe('ryuukyoku')
+    const offered = legalActions(botHoutei)
+    expect(offered).toHaveLength(1)
+    expect(offered[0]).toMatchObject({ type: 'ron', seat: 3 })
+    expect(forcedAction(offered, PLAYER)).toBeNull()
+    expect(passClaim(offered, PLAYER)).toBeNull()
+    expect(winChoice(offered, PLAYER)).toBeNull()
+  })
+
+  it('still forces bot tsumogiri past a bot tsumo offer — placeholder bots never win', () => {
+    // Seed 3951 turn 35: seat 3 draws its 4s tsumo point (core's frozen anchor).
+    // The offering ends [.., tsumo seat 3], and the reverse discard scan must step
+    // over the win exactly as it steps over kans: the drawn tile still goes out.
+    const state = foldRecord({
+      seed: 3951,
+      actions: [...tsumogiriTurns(dealtLive(3951), 35), { type: 'draw', seat: 3 }],
+    })
+    const offered = legalActions(state)
+    expect(offered.some((a) => a.type === 'tsumo' && a.seat === 3)).toBe(true)
+    const forced = forcedAction(offered, PLAYER)
+    if (forced?.type !== 'discard') throw new Error('a bot mid-turn forces a discard')
+    expect(forced.tile).toBe(state.drawn)
+  })
 })
 
 describe('full hand driven through the seam', () => {
@@ -472,5 +697,89 @@ describe('a claim driven through the seam', () => {
     const forced = forcedAction(resumed, PLAYER)
     expect(forced).not.toBeNull()
     expect(resumed).toContain(forced)
+  })
+})
+
+describe('wins driven through the seam', () => {
+  /**
+   * The eager-winner walk: pass every claim, tsumogiri every player turn (the tap
+   * on the DRAWN tile — a tedashi would mutate the 13-tile hand and break the
+   * mined first-event geometry), and take the first win offered. Returns the
+   * actions it appended; every append is asserted to be an element of its fold's
+   * offering (the identity containment that makes the walk a seam test).
+   */
+  function playToWin(seed: number, guardLimit: number): HandAction[] {
+    const actions: HandAction[] = []
+    for (let guard = 0; guard < guardLimit; guard++) {
+      const state = foldRecord({ seed, actions })
+      const offered = legalActions(state)
+      if (offered.length === 0) break
+      const win = winChoice(offered, PLAYER)
+      const next =
+        win ??
+        forcedAction(offered, PLAYER) ??
+        passClaim(offered, PLAYER) ??
+        tapDiscard(offered, PLAYER, state.drawn!)
+      if (next === null) throw new Error('the walk has no driver — a wait with no tap')
+      expect(offered).toContain(next)
+      actions.push(next)
+    }
+    return actions
+  }
+
+  it('plays deal → tsumo: the prompt moment is taken and the hand ends won', () => {
+    const actions = playToWin(TSUMO_SEED, 200)
+    // 32 tsumogiri turns, the 33rd draw, the tsumo: nothing else moved.
+    expect(actions).toHaveLength(66)
+    expect(actions[65]).toEqual({ type: 'tsumo', seat: PLAYER })
+    const won = foldRecord({ seed: TSUMO_SEED, actions })
+    expect(won.phase).toBe('agari')
+    expect(won.win).toEqual({
+      by: 'tsumo',
+      winner: PLAYER,
+      tile: 69,
+      yaku: ['menzen-tsumo', 'pinfu'],
+    })
+    // Quiescence through the seam: the won hand offers nothing and drives nothing.
+    const offered = legalActions(won)
+    expect(offered).toEqual([])
+    expect(forcedAction(offered, PLAYER)).toBeNull()
+    expect(passClaim(offered, PLAYER)).toBeNull()
+    expect(winChoice(offered, PLAYER)).toBeNull()
+  })
+
+  it('plays deal → ron: the window win is taken over the coexisting pon and chis', () => {
+    const actions = playToWin(SHANPON_SEED, 50)
+    // Four tsumogiri turns, then the ron on North's fresh 8m — the win outranked
+    // the pass and the claims in the walk exactly as it leads the offered order.
+    expect(actions).toHaveLength(9)
+    expect(actions[8]).toEqual({ type: 'ron', seat: PLAYER, tile: 31 })
+    const won = foldRecord({ seed: SHANPON_SEED, actions })
+    expect(won.phase).toBe('agari')
+    expect(won.win).toEqual({
+      by: 'ron',
+      winner: PLAYER,
+      from: 3,
+      tile: 31,
+      yaku: ['pinfu', 'iipeikou'],
+    })
+    expect(legalActions(won)).toEqual([])
+  })
+
+  it('plays deal → ryuukyoku → houtei ron: the carve-out win folds out of the ended hand', () => {
+    const actions = playToWin(HOUTEI_SEED, 200)
+    // The full 70-turn wall, then the houtei ron on the final discard.
+    expect(actions).toHaveLength(141)
+    expect(actions[140]).toEqual({ type: 'ron', seat: PLAYER, tile: 21 })
+    const won = foldRecord({ seed: HOUTEI_SEED, actions })
+    expect(won.phase).toBe('agari')
+    expect(won.win).toEqual({
+      by: 'ron',
+      winner: PLAYER,
+      from: 1,
+      tile: 21,
+      yaku: ['chiitoitsu', 'houtei'],
+    })
+    expect(legalActions(won)).toEqual([])
   })
 })
