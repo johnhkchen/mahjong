@@ -89,6 +89,46 @@ describe('the tile back', () => {
   })
 })
 
+// kind → its engraved rank numeral; the 萬 mark is asserted separately since it
+// is shared by all nine.
+const MAN_RANK_GLYPHS: ReadonlyMap<TileKind, string> = new Map([
+  ['1m', '一'],
+  ['2m', '二'],
+  ['3m', '三'],
+  ['4m', '四'],
+  ['5m', '五'],
+  ['6m', '六'],
+  ['7m', '七'],
+  ['8m', '八'],
+  ['9m', '九'],
+])
+
+describe('man faces', () => {
+  it('engraves each rank numeral on its own kind and no other', () => {
+    for (const [kind, glyph] of MAN_RANK_GLYPHS) {
+      expect(chipOf(kind), kind).toContain(`>${glyph}<`)
+      for (const other of TILE_KINDS) {
+        if (other !== kind)
+          expect(chipOf(other), `${glyph} on ${other}`).not.toContain(`>${glyph}<`)
+      }
+    }
+  })
+
+  it('marks all nine man kinds — and only them — with 萬', () => {
+    for (const kind of TILE_KINDS) {
+      const body = chipOf(kind)
+      if (MAN_RANK_GLYPHS.has(kind)) expect(body, kind).toContain('>萬<')
+      else expect(body, kind).not.toContain('萬')
+    }
+  })
+
+  it('renders no ASCII rank digit on any man face', () => {
+    for (const kind of MAN_RANK_GLYPHS.keys()) {
+      expect(chipOf(kind), kind).not.toMatch(/>[1-9]</)
+    }
+  })
+})
+
 describe('the full set at once', () => {
   it('34 face chips + a back yield exactly the 34 kinds, once each', () => {
     const sweep =

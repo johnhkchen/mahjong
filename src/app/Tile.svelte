@@ -19,6 +19,21 @@
     p: '#2e5aa0',
     s: '#2e7d4f',
   }
+
+  // Man rank numerals, keyed by the kind's rank digit. The face composes this
+  // over the red 萬 mark — Taiwan two-color (the numeral's blue is the palette's
+  // ink-blue, deliberately a literal: it is not "pin ink").
+  const MAN_RANKS: Record<string, string> = {
+    '1': '一',
+    '2': '二',
+    '3': '三',
+    '4': '四',
+    '5': '五',
+    '6': '六',
+    '7': '七',
+    '8': '八',
+    '9': '九',
+  }
 </script>
 
 <script lang="ts">
@@ -30,9 +45,9 @@
   // The mpsz kind still renders, as the visually-hidden `.kind` token: it is the
   // chip's accessible name and the tile-shaped text the SSR tests match; the SVG art
   // is aria-hidden presentation over it, and must never emit a `[1-9][mpsz]` text
-  // node (the interim numbered face splits rank and suit mark into separate nodes
-  // for exactly this reason) nor an English wind word. T-007-01-02/-03 replace only
-  // the interim numbered branch; the chassis, honors, and back are settled here.
+  // node (numbered faces split rank and suit mark into separate nodes for exactly
+  // this reason) nor an English wind word. T-007-01-02 replaces only the interim
+  // p/s branch; the chassis, honors, man faces, and back are settled.
   let { id }: { id: TileId | 'back' } = $props()
 
   const kind = $derived(typeof id === 'number' ? kindOf(id) : null)
@@ -63,13 +78,33 @@
       {:else if kind === '5z'}
         <!-- Haku: the classic blank face with an engraved frame. -->
         <rect x="12" y="14" width="36" height="50" rx="4" fill="none" stroke="#9db4c9" stroke-width="3" />
+      {:else if kind !== null && suit === 'm'}
+        <!-- Man face: engraved kanji numeral over the suit mark, Taiwan two-color. -->
+        <text
+          class="glyph"
+          x="30"
+          y="42"
+          text-anchor="middle"
+          font-size="32"
+          fill="#2e5aa0"
+          stroke="#2e5aa0"
+          stroke-width="0.6">{MAN_RANKS[kind[0]]}</text
+        >
+        <text
+          class="glyph"
+          x="30"
+          y="70"
+          text-anchor="middle"
+          font-size="24"
+          fill={SUIT_INK.m}
+          stroke={SUIT_INK.m}
+          stroke-width="0.6">萬</text
+        >
       {:else if kind !== null && suit !== null && suit !== 'z'}
-        <!-- Interim numbered face until -02/-03: rank numeral over a small suit
-             mark (萬 / coin / bamboo stick) — separate nodes, never one token. -->
+        <!-- Interim p/s face until -02: rank numeral over a small suit mark
+             (coin / bamboo stick) — separate nodes, never one token. -->
         <text class="rank" x="30" y="40" text-anchor="middle" font-size="34" fill={SUIT_INK[suit]}>{kind[0]}</text>
-        {#if suit === 'm'}
-          <text class="glyph" x="30" y="68" text-anchor="middle" font-size="18" fill={SUIT_INK.m}>萬</text>
-        {:else if suit === 'p'}
+        {#if suit === 'p'}
           <circle cx="30" cy="62" r="8" fill={SUIT_INK.p} />
         {:else}
           <rect x="27" y="50" width="6" height="22" rx="3" fill={SUIT_INK.s} />
