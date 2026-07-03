@@ -1,24 +1,29 @@
-// The standard-form shanten count: how many tile exchanges separate a concealed hand
-// from tenpai on the four-sets-and-a-pair shape — −1 complete, 0 tenpai, up to 8 for
-// thirteen mutually unreachable tiles. The core datum "competent" is defined against:
-// the discard policy (T-006-03-01) minimizes it, the teaching prompts read it, and the
-// min-of-three combinator (T-006-02-02) will fold chiitoitsu and kokushi over it —
-// the plain `shanten` name is reserved for that combinator. Like agari.ts and unlike
+// The shanten datum: how many tile exchanges separate a concealed hand from tenpai.
+// `standardShanten` counts exchanges to the four-sets-and-a-pair shape alone — −1
+// complete, 0 tenpai, up to 8 for thirteen mutually unreachable tiles. `shanten`, the
+// module's face, is the min-of-three combinator the ticket promises: standard, chiitoitsu
+// (seven distinct pairs), and kokushi (thirteen orphans), each read over the same
+// concealed hand — the single shanten datum "competent" is defined against, the discard
+// policy (T-006-03-01) minimizes, and the teaching prompts read. Like agari.ts and unlike
 // waits.ts, this is KIND-level SHAPE distance: melds are read for ARITY ONLY (a call
 // is one completed set whatever its content, kans included), and a kind whose four
 // copies are all visible is never discounted — 4-copy exhaustion is waits' convention,
 // reconciled with shanten by the property crown (T-006-02-03), not re-derived here.
 //
-// The algorithm is the classical block-count maximum: over every disjoint decomposition
-// of the counts into complete sets (triplet/run), partial sets (a pair as proto-triplet,
-// or two suit tiles at distance 1 or 2 as proto-run), and at most one reserved head
-// pair — subject to the block cap sets + partials ≤ 4 − melds —
+// The standard-form algorithm is the classical block-count maximum: over every disjoint
+// decomposition of the counts into complete sets (triplet/run), partial sets (a pair as
+// proto-triplet, or two suit tiles at distance 1 or 2 as proto-run), and at most one
+// reserved head pair — subject to the block cap sets + partials ≤ 4 − melds —
 //
 //   standardShanten = 8 − 2·melds − max(2·sets + partials + head)
 //
 // The cap and the explicit head flag are what make the formula exact; maximizing over
 // ALL decompositions (a pair may serve as head, as a partial, or feed a triplet) is
-// what an exhaustive backtracker buys over every greedy counting.
+// what an exhaustive backtracker buys over every greedy counting. Chiitoitsu and kokushi
+// use the standard closed-form results instead (O(34)/O(13) linear scans, no search
+// needed) — see chiitoiShanten/kokushiShanten below. Both are zero-meld forms by rule;
+// `shanten` only evaluates them when melds is empty, and reads exactly standardShanten
+// otherwise.
 
 import { KIND_COUNT, kindIndexOf, type TileKind } from './tiles'
 import type { Meld } from './record'
@@ -139,4 +144,55 @@ export function standardShanten(concealed: readonly TileKind[], melds: readonly 
   }
   const counts = countsOf(concealed)
   return 8 - 2 * melds.length - bestValue(counts, 0, MAX_MELDS - melds.length, true)
+}
+
+/** The 13 kokushi kind indices: terminals of each numbered suit, then every honor — the agari.ts KOKUSHI_KIND_INDEXES twin. */
+const KOKUSHI_KIND_INDEXES: readonly number[] = [0, 8, 9, 17, 18, 26, 27, 28, 29, 30, 31, 32, 33]
+
+/**
+ * Chiitoitsu shanten: `6 − pairs + max(0, 7 − kinds)`, where `pairs` counts kinds held
+ * at ≥ 2 copies and `kinds` counts distinct kinds present — both naturally ≤ 7/≤ 13 for
+ * a legal hand, so no explicit cap is needed. The second term penalizes duplicate-heavy
+ * hands (e.g. four-of-a-kind) that hold pairs but too few DISTINCT kinds to ever reach
+ * seven without breaking one down. Zero-meld form only — the caller gates on that.
+ */
+function chiitoiShanten(counts: readonly number[]): number {
+  let pairs = 0
+  let kinds = 0
+  for (const count of counts) {
+    if (count >= 2) pairs += 1
+    if (count >= 1) kinds += 1
+  }
+  return 6 - pairs + Math.max(0, 7 - kinds)
+}
+
+/**
+ * Kokushi shanten: `13 − kinds − hasPair`, where `kinds` counts the 13 terminal/honor
+ * kinds present at least once and `hasPair` is 1 iff one of them is held at ≥ 2 copies.
+ * Zero-meld form only — the caller gates on that.
+ */
+function kokushiShanten(counts: readonly number[]): number {
+  let kinds = 0
+  let hasPair = false
+  for (const k of KOKUSHI_KIND_INDEXES) {
+    if (counts[k] >= 1) kinds += 1
+    if (counts[k] >= 2) hasPair = true
+  }
+  return 13 - kinds - (hasPair ? 1 : 0)
+}
+
+/**
+ * The min-of-three combinator — the module's face. Returns
+ * `min(standardShanten, chiitoiShanten, kokushiShanten)`: the single shanten datum the
+ * discard policy minimizes and the teaching prompts read. Delegates arity and meld-count
+ * validation to `standardShanten` (same RangeError messages, no duplicated checks).
+ * Chiitoitsu and kokushi are zero-meld forms by rule — any call breaks both — so they
+ * are only evaluated when `melds.length === 0`; a melded hand reads exactly
+ * `standardShanten`. Pure read: inputs never mutated, same input ⇒ same output.
+ */
+export function shanten(concealed: readonly TileKind[], melds: readonly Meld[]): number {
+  const standard = standardShanten(concealed, melds)
+  if (melds.length > 0) return standard
+  const counts = countsOf(concealed)
+  return Math.min(standard, chiitoiShanten(counts), kokushiShanten(counts))
 }

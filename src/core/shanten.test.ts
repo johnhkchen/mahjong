@@ -4,12 +4,12 @@
 // exchange sequence that realizes the count. Never derived from module output. Several
 // hands deliberately echo waits.test.ts fixtures whose tenpai status is independently
 // pinned there — the cross-module agreement is the point. Property sweeps against a
-// brute-force reference are T-006-02-03 by ticket design, not thinness. Melds are
+// brute-force reference live in shanten.property.test.ts (T-006-02-03). Melds are
 // arity-only stubs with arbitrary ids (the agari.test.ts FAKE_MELDS pattern) — honest
 // here because standardShanten, like decomposeAgari, reads meld arity only.
 
 import { describe, expect, it } from 'vitest'
-import { standardShanten, type Meld, type TileKind } from './index'
+import { shanten, standardShanten, type Meld, type TileKind } from './index'
 
 /** mpsz shorthand: '123m55z' → ['1m','2m','3m','5z','5z']. Test-side sugar only. */
 function h(spec: string): TileKind[] {
@@ -189,5 +189,93 @@ describe('contract', () => {
     expect(stubbed).toEqual([])
     expect(first).toBe(second)
     expect(first).toBe(1)
+  })
+})
+
+describe('shanten combinator', () => {
+  describe('chiitoitsu binds the minimum', () => {
+    it('six pairs plus a single: chiitoitsu tenpai where standard reads 3', () => {
+      // Same hand as the standard-form "block cap" fixture above: standardShanten
+      // reads 3 there. Chiitoitsu: pairs = 6 (1m 2m 3p 4p 5s 6s), kinds = 7 (+7z) →
+      // 6 − 6 + max(0, 7 − 7) = 0. min(3, 0, kokushi) = 0.
+      expect(standardShanten(h('1122m3344p5566s7z'), [])).toBe(3)
+      expect(shanten(h('1122m3344p5566s7z'), [])).toBe(0)
+    })
+
+    it('seven distinct pairs: a complete chiitoitsu hand where standard reads 3', () => {
+      // The agari.test.ts chiitoitsu fixture, 14 tiles. Chiitoitsu: pairs = kinds = 7
+      // → 6 − 7 + max(0, 0) = −1 (a win). Standard: no set exists (every kind holds
+      // exactly 2 copies) — best value is 1 head + 4 capped partials = 5, shanten
+      // 8 − 5 = 3. min(3, −1, kokushi) = −1.
+      expect(standardShanten(h('1122m3344p5566s77z'), [])).toBe(3)
+      expect(shanten(h('1122m3344p5566s77z'), [])).toBe(-1)
+    })
+  })
+
+  describe('kokushi binds the minimum', () => {
+    it('thirteen distinct orphans: kokushi tenpai where standard reads 8', () => {
+      // All 13 terminal/honor kinds, no duplicate — the waits.test.ts thirteen-sided
+      // fixture. Kokushi: kinds = 13, hasPair = false → 13 − 13 − 0 = 0. Standard: no
+      // kind repeats and no two kinds are run-adjacent (terminals of different suits,
+      // honors) — value 0, shanten 8. min(8, chiitoi, 0) = 0.
+      expect(standardShanten(h('19m19p19s1234567z'), [])).toBe(8)
+      expect(shanten(h('19m19p19s1234567z'), [])).toBe(0)
+    })
+
+    it('thirteen orphans plus a duplicate: complete kokushi where standard reads 7', () => {
+      // 1m doubled, 14 tiles — the agari.test.ts kokushi-duplicate pattern. Kokushi:
+      // kinds = 13, hasPair = true → 13 − 13 − 1 = −1 (a win). Standard: 11m is the
+      // only pair (head, value 1), every other kind is a lone terminal/honor with no
+      // adjacent partner — value 1, shanten 8 − 1 = 7. min(7, chiitoi, −1) = −1.
+      expect(standardShanten(h('119m19p19s1234567z'), [])).toBe(7)
+      expect(shanten(h('119m19p19s1234567z'), [])).toBe(-1)
+    })
+  })
+
+  describe('standard form wins when neither special form is close', () => {
+    it('the ryanmen tenpai: standard 0 beats chiitoitsu 4 and kokushi 9', () => {
+      // 23m456p789s111z55z: chiitoitsu pairs = {1z, 5z} = 2, kinds = 10 →
+      // 6 − 2 + max(0, 7 − 10) = 4. Kokushi kinds present = {9s, 1z, 5z} = 3,
+      // hasPair (1z or 5z) → 13 − 3 − 1 = 9. min(0, 4, 9) = 0.
+      expect(shanten(h('23m456p789s111z55z'), [])).toBe(0)
+      expect(shanten(h('23m456p789s111z55z'), [])).toBe(
+        standardShanten(h('23m456p789s111z55z'), []),
+      )
+    })
+  })
+
+  describe('meld gate: special forms never apply with melds present', () => {
+    it('one meld: shanten reads exactly standardShanten regardless of concealed shape', () => {
+      // 23m456p789s55z with one meld is standard-tenpai (pinned above); chiitoitsu
+      // and kokushi are zero-meld forms by rule, so the combinator must not even
+      // consider them here.
+      expect(shanten(h('23m456p789s55z'), melds(1))).toBe(0)
+      expect(shanten(h('23m456p789s55z'), melds(1))).toBe(
+        standardShanten(h('23m456p789s55z'), melds(1)),
+      )
+    })
+  })
+
+  describe('contract', () => {
+    it('throws the same RangeError standardShanten throws, verbatim', () => {
+      expect(() => shanten(h('123m'), [])).toThrowError(
+        new RangeError('standardShanten requires 13 or 14 concealed tiles with 0 melds, got 3'),
+      )
+      expect(() => shanten([], [...FAKE_MELDS, FAKE_MELDS[0]])).toThrowError(
+        new RangeError('standardShanten with 5 melds — a hand holds at most 4'),
+      )
+    })
+
+    it('is a pure read: inputs unmutated, repeat calls identical', () => {
+      const hand = h('1122m3344p5566s7z')
+      const stubbed = [...melds(0)]
+      const handBefore = [...hand]
+      const first = shanten(hand, stubbed)
+      const second = shanten(hand, stubbed)
+      expect(hand).toEqual(handBefore)
+      expect(stubbed).toEqual([])
+      expect(first).toBe(second)
+      expect(first).toBe(0)
+    })
   })
 })
