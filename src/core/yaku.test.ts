@@ -132,6 +132,74 @@ const CASES: Partial<Record<YakuName, YakuCase>> = {
     positive: ctxOf('123m456m789m234p55s', { source: 'wall' }),
     negative: ctxOf('123m456m234p55s', { melds: [chi('7m')], source: 'wall' }),
   },
+  // All runs, non-yakuhai pair, won on 4s = the low end of 456s (ryanmen);
+  // the negative wins the SAME hand on 4p, the middle of 345p (kanchan).
+  pinfu: {
+    positive: ctxOf('234m567m345p88p456s', { winningKind: '4s' }),
+    negative: ctxOf('234m567m345p88p456s', { winningKind: '4p' }),
+  },
+  // One duplicated 123m run, closed; the negative is the same pairing OPENED
+  // by a chi — iipeikou is a closed yaku.
+  iipeikou: {
+    positive: ctxOf('123m123m456p789s55z'),
+    negative: ctxOf('123m123m456p55z', { melds: [chi('7s')] }),
+  },
+  // 234m+234m and 567p+567p are two duplicated runs; the negative holds only
+  // the one 123m duplication.
+  ryanpeikou: {
+    positive: ctxOf('223344m556677p88s', { pick: (d) => d.form === 'standard' }),
+    negative: ctxOf('123m123m456p789s55z'),
+  },
+  // The 234 run in all three suits; the negative has it in only m and p.
+  'sanshoku-doujun': {
+    positive: ctxOf('234m567m234p234s88s'),
+    negative: ctxOf('234m567m234p567p88s'),
+  },
+  // The 222 triplet in all three suits; the negative's souzu triplet is 333s.
+  'sanshoku-doukou': {
+    positive: ctxOf('222m345m222p222s88s'),
+    negative: ctxOf('222m345m222p333s88s'),
+  },
+  // 123-456-789 in manzu; the negative spreads the straight across suits.
+  ittsuu: {
+    positive: ctxOf('123m456m789m234p55s'),
+    negative: ctxOf('123m234m456p789s55s'),
+  },
+  // Every set holds a terminal or honor, with a run and honors present; the
+  // negative's 234m is the one all-simple set.
+  chanta: {
+    positive: ctxOf('123m789m789p111z22z'),
+    negative: ctxOf('234m789m789p111z22z'),
+  },
+  // Every set and the pair hold a TERMINAL, no honors; the negative swaps the
+  // 999s triplet for 111z — an honor set is chanta territory, never junchan.
+  junchan: {
+    positive: ctxOf('123m789m123p999s99p'),
+    negative: ctxOf('123m789m123p111z99p'),
+  },
+  // Four triplet-class sets (two concealed, two pons); the negative turns one
+  // pon into a chi — a single run breaks toitoi.
+  toitoi: {
+    positive: ctxOf('222m333p11s', { melds: [pon('7s'), pon('5p')] }),
+    negative: ctxOf('222m333p11s', { melds: [chi('5p'), pon('7s')] }),
+  },
+  // Three concealed triplets by self-draw; the negative RONS the 4s that
+  // completes the third triplet with no run to absorb it — two concealed left.
+  sanankou: {
+    positive: ctxOf('222m567m333p444s88s', { source: 'wall', winningKind: '4s' }),
+    negative: ctxOf('222m567m333p444s88s', { source: 'discard', winningKind: '4s' }),
+  },
+  // Three kans of mixed forms; the negative downgrades one kan to a pon.
+  sankantsu: {
+    positive: ctxOf('234m88s', { melds: [ankan('2z'), daiminkan('9p'), shouminkan('5s')] }),
+    negative: ctxOf('234m88s', { melds: [ankan('2z'), daiminkan('9p'), pon('5s')] }),
+  },
+  // Two dragon triplets + the third dragon as pair; the negative holds all
+  // THREE dragon triplets — daisangen territory, not shousangen.
+  shousangen: {
+    positive: ctxOf('234m567p555z666z77z'),
+    negative: ctxOf('234m555z666z777z88s'),
+  },
   // All simples; the negative differs only by 123m carrying the terminal 1m.
   tanyao: {
     positive: ctxOf('234m345m456p567s88s'),

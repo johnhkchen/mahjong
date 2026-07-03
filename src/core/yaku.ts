@@ -18,6 +18,7 @@ import {
   isTerminal,
   kindIndexOf,
   kindOf,
+  rankOf,
   suitOf,
   type NumberedSuit,
   type TileKind,
@@ -309,22 +310,246 @@ function chankan(ctx: WinContext): boolean {
   return ctx.source === 'chankan'
 }
 
+/** The three dragon kinds — always yakuhai, and the shousangen material. */
+const DRAGON_KINDS: readonly TileKind[] = ['5z', '6z', '7z']
+
+/** A kind whose triplet is always worth a yaku for THIS winner: dragons + winds. */
+function isYakuhaiKind(ctx: WinContext, kind: TileKind): boolean {
+  return DRAGON_KINDS.includes(kind) || kind === ctx.seatWind || kind === ctx.roundWind
+}
+
+/** Whether the run starting at `start` contains `kind` (same suit block). */
+function runContains(start: TileKind, kind: TileKind): boolean {
+  if (suitOf(kind) !== suitOf(start)) return false
+  const offset = kindIndexOf(kind) - kindIndexOf(start)
+  return offset >= 0 && offset <= 2
+}
+
+/**
+ * Whether winning on `winning` completes the run at `start` from a TWO-SIDED
+ * (ryanmen) wait: at the low end the pre-win pair was (start+1, start+2), two-
+ * sided iff a rank above the run exists (start rank ≤ 6 — 789 won on 7 is the
+ * 89 penchan); at the high end the pair was (start, start+1), two-sided iff a
+ * rank below exists (start rank ≥ 2 — 123 won on 3 is the 12 penchan). The
+ * middle tile is the kanchan by construction.
+ */
+function completesRyanmen(start: TileKind, winning: TileKind): boolean {
+  if (suitOf(winning) !== suitOf(start)) return false
+  const offset = kindIndexOf(winning) - kindIndexOf(start)
+  const rank = rankOf(start)!
+  if (offset === 0) return rank <= 6
+  if (offset === 2) return rank >= 2
+  return false
+}
+
+/** A set "contains a terminal": an edge run (123/789) or a terminal triplet. */
+function setHasTerminal(set: ConcealedSet): boolean {
+  if (set.type === 'run') {
+    const rank = rankOf(set.start)!
+    return rank === 1 || rank === 7
+  }
+  return isTerminal(set.kind)
+}
+
+/** Duplicated concealed runs as Σ⌊copies-per-start / 2⌋ — the peikou count. */
+function peikouCount(ctx: WinContext): number {
+  if (ctx.decomposition.form !== 'standard') return 0
+  const byStart = new Map<TileKind, number>()
+  for (const set of ctx.decomposition.sets) {
+    if (set.type === 'run') byStart.set(set.start, (byStart.get(set.start) ?? 0) + 1)
+  }
+  let pairs = 0
+  for (const count of byStart.values()) pairs += Math.floor(count / 2)
+  return pairs
+}
+
+/**
+ * Concealed triplets: the decomposition's triplets plus ankans, MINUS the ron
+ * adjustment — a triplet of the winning kind completed by ron is not concealed,
+ * unless the same decomposition holds a run that can absorb the winning tile
+ * instead (the favorable attribution; the pair can never absorb it — a pair and
+ * a triplet of one kind would be five copies).
+ */
+function concealedTripletCount(ctx: WinContext): number {
+  const decomposition = ctx.decomposition
+  if (decomposition.form !== 'standard') return 0
+  let count = ctx.melds.filter((meld) => meld.type === 'ankan').length
+  for (const set of decomposition.sets) {
+    if (set.type === 'triplet') count += 1
+  }
+  const ronCompletesTriplet =
+    !isTsumo(ctx) &&
+    decomposition.sets.some((set) => set.type === 'triplet' && set.kind === ctx.winningKind) &&
+    !decomposition.sets.some((set) => set.type === 'run' && runContains(set.start, ctx.winningKind))
+  return ronCompletesTriplet ? count - 1 : count
+}
+
+/**
+ * Pinfu: a fully concealed all-runs hand (any meld — even an ankan, itself a
+ * triplet — disqualifies) whose pair is not yakuhai (an otakaze wind pair is
+ * fine) and whose winning tile completes some run from a two-sided wait.
+ */
+function pinfu(ctx: WinContext): boolean {
+  const decomposition = ctx.decomposition
+  if (decomposition.form !== 'standard' || ctx.melds.length > 0) return false
+  if (!decomposition.sets.every((set) => set.type === 'run')) return false
+  if (isYakuhaiKind(ctx, decomposition.pair)) return false
+  return decomposition.sets.some(
+    (set) => set.type === 'run' && completesRyanmen(set.start, ctx.winningKind),
+  )
+}
+
+/**
+ * Iipeikou: a closed hand with EXACTLY one duplicated concealed run — two
+ * duplicated pairs are ryanpeikou, which supersedes (the predicates are
+ * disjoint by construction, never both).
+ */
+function iipeikou(ctx: WinContext): boolean {
+  return isMenzen(ctx.melds) && peikouCount(ctx) === 1
+}
+
+/** Ryanpeikou: a closed hand with two duplicated concealed runs. */
+function ryanpeikou(ctx: WinContext): boolean {
+  return isMenzen(ctx.melds) && peikouCount(ctx) === 2
+}
+
+/** Sanshoku doujun: the same-starting run in all three numbered suits. */
+function sanshokuDoujun(ctx: WinContext): boolean {
+  const sets = combinedSets(ctx)
+  if (sets === null) return false
+  const suitsByRank = new Map<number, Set<string>>()
+  for (const set of sets) {
+    if (set.type !== 'run') continue
+    const rank = rankOf(set.start)!
+    const suits = suitsByRank.get(rank) ?? new Set<string>()
+    suits.add(suitOf(set.start))
+    suitsByRank.set(rank, suits)
+  }
+  return [...suitsByRank.values()].some((suits) => suits.size === 3)
+}
+
+/** Sanshoku doukou: the same-rank triplet in all three numbered suits. */
+function sanshokuDoukou(ctx: WinContext): boolean {
+  const sets = combinedSets(ctx)
+  if (sets === null) return false
+  const suitsByRank = new Map<number, Set<string>>()
+  for (const set of sets) {
+    if (set.type !== 'triplet' || isHonor(set.kind)) continue
+    const rank = rankOf(set.kind)!
+    const suits = suitsByRank.get(rank) ?? new Set<string>()
+    suits.add(suitOf(set.kind))
+    suitsByRank.set(rank, suits)
+  }
+  return [...suitsByRank.values()].some((suits) => suits.size === 3)
+}
+
+/** Ittsuu: the 123-456-789 straight within ONE suit, melds included. */
+function ittsuu(ctx: WinContext): boolean {
+  const sets = combinedSets(ctx)
+  if (sets === null) return false
+  const startsBySuit = new Map<string, Set<number>>()
+  for (const set of sets) {
+    if (set.type !== 'run') continue
+    const suit = suitOf(set.start)
+    const starts = startsBySuit.get(suit) ?? new Set<number>()
+    starts.add(rankOf(set.start)!)
+    startsBySuit.set(suit, starts)
+  }
+  return [...startsBySuit.values()].some(
+    (starts) => starts.has(1) && starts.has(4) && starts.has(7),
+  )
+}
+
+/**
+ * Chanta: every set and the pair contain a terminal or honor, with at least one
+ * run and at least one honor. The two extra clauses keep the family disjoint:
+ * no honors is junchan territory, no runs is honroutou territory — the standard
+ * no-stacking convention encoded structurally rather than by aggregator cleanup.
+ */
+function chanta(ctx: WinContext): boolean {
+  const decomposition = ctx.decomposition
+  if (decomposition.form !== 'standard') return false
+  const sets = combinedSets(ctx)!
+  if (!sets.some((set) => set.type === 'run')) return false
+  if (!allKinds(ctx).some(isHonor)) return false
+  if (!isTerminal(decomposition.pair) && !isHonor(decomposition.pair)) return false
+  return sets.every((set) => setHasTerminal(set) || (set.type === 'triplet' && isHonor(set.kind)))
+}
+
+/**
+ * Junchan: every set and the pair contain a TERMINAL (honors fail this by
+ * definition), with at least one run — the all-triplet all-terminal shape is
+ * chinroutou, a yakuman, and this catalog stays silent on it by design.
+ */
+function junchan(ctx: WinContext): boolean {
+  const decomposition = ctx.decomposition
+  if (decomposition.form !== 'standard') return false
+  const sets = combinedSets(ctx)!
+  if (!sets.some((set) => set.type === 'run')) return false
+  if (!isTerminal(decomposition.pair)) return false
+  return sets.every(setHasTerminal)
+}
+
+/** Toitoi: all four sets triplet-class — any kan counts, any chi disqualifies. */
+function toitoi(ctx: WinContext): boolean {
+  const sets = combinedSets(ctx)
+  return sets !== null && sets.every((set) => set.type === 'triplet')
+}
+
+/**
+ * Sanankou: at least three concealed triplets (see concealedTripletCount for
+ * the ron adjustment). "At least", not "exactly": four concealed triplets is
+ * suuankou, a yakuman the -04 gate suppresses standard yaku under — keeping the
+ * predicate monotone keeps yakuman knowledge out of this module.
+ */
+function sanankou(ctx: WinContext): boolean {
+  return concealedTripletCount(ctx) >= 3
+}
+
+/** Sankantsu: at least three kans of any form (four is suukantsu, -04's). */
+function sankantsu(ctx: WinContext): boolean {
+  return ctx.melds.filter((meld) => meld.type !== 'chi' && meld.type !== 'pon').length >= 3
+}
+
+/**
+ * Shousangen: exactly two dragon triplets with the third dragon as the pair —
+ * three dragon triplets are daisangen, the -04 yakuman.
+ */
+function shousangen(ctx: WinContext): boolean {
+  const decomposition = ctx.decomposition
+  if (decomposition.form !== 'standard') return false
+  const dragonTriplets = DRAGON_KINDS.filter((kind) => hasTripletOf(ctx, kind)).length
+  return dragonTriplets === 2 && DRAGON_KINDS.includes(decomposition.pair)
+}
+
 /**
  * The catalog table zipping names to predicates in catalog order — module-
  * private: consumers get names from standardYakuOf, never predicate functions.
  */
 const STANDARD_YAKU: readonly { name: YakuName; test: (ctx: WinContext) => boolean }[] = [
   { name: 'menzen-tsumo', test: menzenTsumo },
+  { name: 'pinfu', test: pinfu },
   { name: 'tanyao', test: tanyao },
+  { name: 'iipeikou', test: iipeikou },
   { name: 'yakuhai-haku', test: yakuhaiOf('5z') },
   { name: 'yakuhai-hatsu', test: yakuhaiOf('6z') },
   { name: 'yakuhai-chun', test: yakuhaiOf('7z') },
   { name: 'yakuhai-seat-wind', test: yakuhaiSeatWind },
   { name: 'yakuhai-round-wind', test: yakuhaiRoundWind },
+  { name: 'sanshoku-doujun', test: sanshokuDoujun },
+  { name: 'sanshoku-doukou', test: sanshokuDoukou },
+  { name: 'ittsuu', test: ittsuu },
+  { name: 'chanta', test: chanta },
+  { name: 'junchan', test: junchan },
+  { name: 'toitoi', test: toitoi },
+  { name: 'sanankou', test: sanankou },
+  { name: 'sankantsu', test: sankantsu },
   { name: 'chiitoitsu', test: chiitoitsu },
   { name: 'honroutou', test: honroutou },
+  { name: 'shousangen', test: shousangen },
   { name: 'honitsu', test: honitsu },
   { name: 'chinitsu', test: chinitsu },
+  { name: 'ryanpeikou', test: ryanpeikou },
   { name: 'haitei', test: haitei },
   { name: 'houtei', test: houtei },
   { name: 'rinshan', test: rinshan },
