@@ -94,3 +94,17 @@ Done. New `describe('terminology (SSR, no localStorage)', ...)` block, `console.
 `describe` blocks, which `render()` at describe-collection time — this one needs the spy active
 during the render itself). `--project node` run green (53/53), full suite green (912/912),
 `just check` clean.
+
+## Step 5 — Final gate
+
+`just check` clean (197 files, 0 errors/warnings). `just test` full suite green, 912/912, all
+projects. `just build` — single-file gate passes: 104.31 kB (gzip 34.32 kB), up from
+T-010-01-01's 103.6 kB baseline (the toggle's markup/script plus the "中文" glyph). Grep sanity:
+`mahjong-terminology` appears exactly twice in `src/` — the one `const STORAGE_KEY` definition
+in `dictionary.svelte.ts` and its test's own copy of the literal (asserted against, not
+imported, matching this file's existing style of duplicating small constants rather than
+exporting test-only surface).
+
+Five commits total: RDSPI artifacts, Step 1 (persistence + the jsdom/Node localStorage
+environment fix), Step 2 (toggle control), Step 3 (toggle/persistence tests), Step 4 (SSR
+warning assertion). `review.md` follows.
