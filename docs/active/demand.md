@@ -48,7 +48,15 @@ and off this board.
 - **Tile motion + tile sorting** — riichi-stick placement, call and draw/discard animations, and
   auto-sort of the concealed hand. _(advances P4)_
 - **Original tile art pack** — a full drawn-from-scratch tile set (man/pin/sou, winds, dragons);
-  never a commercial set. _(advances P4)_
+  never a commercial set. **Playtest demand (2026-07-02, owner):** current tiles don't read as
+  mahjong tiles — the set should look like real (OG) tiles: ivory face, beveled body, proper
+  suit glyphs, and honor tiles drawn as the traditional kanji wind/dragon faces. _(advances P4)_
+- **Flower tiles** — owner playtest ask (2026-07-02): would like to see flower tiles.
+  **Ruleset fork to decide at pull time:** Riichi has no flowers (they belong to Chinese
+  Classical / Hong Kong sets); the charter defers alternate rulesets until the definition of
+  done. Options when pulled: (a) decorative only — flowers appear in art/menus/hand-end
+  flourish without entering play; (b) a post-DoD ruleset variant behind the engine boundary.
+  _(advances P4; (b) gated by charter)_
 
 ## Tier 5 — Rigor as the series exhibit (P5: where the one-shot can't follow)
 
