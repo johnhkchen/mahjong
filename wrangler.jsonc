@@ -1,10 +1,9 @@
-// Cloudflare Workers static assets, assets-only: no worker script, no bindings —
-// the deploy is the one self-contained dist/index.html and nothing else.
-// mahjong.b28.dev custom-domain routing is wired by the CI/CD pipeline play
-// (out of scope per E-001) — no routes/domains block until then.
+// Cloudflare Workers static assets: the deploy is the one self-contained dist/index.html.
+// mahjong.b28.dev custom domain is bound via the route below.
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "mahjong",
   "compatibility_date": "2026-07-02",
+  "routes": [{ "pattern": "mahjong.b28.dev", "custom_domain": true }],
   "assets": { "directory": "./dist" }
 }
