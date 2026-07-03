@@ -165,6 +165,10 @@
   function newHand() {
     if (table.phase === 'playing') return
     hands.push([])
+    // Presentation state is per-hand: a houtei dismissal from the ENDED hand must
+    // not hide the next hand's prompts (pre-E-008 this flag never outlived a hand;
+    // with continuation it did — the gummed-notifications bug).
+    dismissed = false
   }
 
   // End the current GAME and start a fresh one: a new seed, a single empty hand,
