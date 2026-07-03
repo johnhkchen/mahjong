@@ -40,17 +40,9 @@ and off this board.
 
 ## Tier 4 — Feel and original art (P4: what makes a hand feel real)
 
-- **Mobile-first table** — hand, discard pond, and four seats laid out for one-thumb play on a
-  phone. _(advances P4)_
-- **Tile motion + tile sorting** — riichi-stick placement, call and draw/discard animations, and
-  auto-sort of the concealed hand. _(advances P4)_
-- **Original tile art pack, Taiwan-style aesthetic** — a full drawn-from-scratch tile set;
-  never a commercial set. **Owner direction (2026-07-02, playtest):** tiles must read as real
-  mahjong tiles in the **Taiwanese style** — ivory face, beveled body, bold engraved suit
-  glyphs, honors as traditional kanji wind/dragon faces — and the drawn set **includes the
-  eight flower tiles** (四花 plum/orchid/chrysanthemum/bamboo + 四季 seasons) so the committed
-  Taiwan-variant needs no second art pull; flowers stay decorative (menus/flourish) while the
-  ruleset is Riichi. _(advances P4)_
+- **Riichi-stick placement animation** — the riichi declaration moment made physical (stick
+  slides to the table, tile rotated in the pond); pull once the riichi mechanic exists.
+  _(advances P4)_
 
 ## Post-DoD — committed, gated behind the definition of done
 
