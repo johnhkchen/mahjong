@@ -21,6 +21,7 @@ import {
 import { PLAYER, promptChoices, riichiPrompt, winChoice, type WindowOutcome } from './drive'
 import { setTerminology, type TermKey, type Terminology } from './dictionary.svelte'
 import ClaimPrompt from './ClaimPrompt.svelte'
+import ReportBug from './ReportBug.svelte'
 import RiichiPrompt from './RiichiPrompt.svelte'
 import Table from './Table.svelte'
 import WindowNotice from './WindowNotice.svelte'
@@ -50,6 +51,13 @@ const EXPECTED: Record<Terminology, Record<TermKey, string>> = {
     fu: 'fu',
     han: 'han',
     pot: 'riichi pot',
+    promptEveryCall: 'prompt every call',
+    quietCalls: 'quiet calls',
+    reportBug: 'report bug',
+    copyReport: 'copy report',
+    openIssue: 'open issue',
+    reportMessage: 'message',
+    reportCopied: 'copied',
   },
   'zh-hant': {
     chi: '吃',
@@ -73,6 +81,13 @@ const EXPECTED: Record<Terminology, Record<TermKey, string>> = {
     fu: '符',
     han: '翻',
     pot: '供託',
+    promptEveryCall: '提示每次叫牌',
+    quietCalls: '安靜叫牌',
+    reportBug: '回報問題',
+    copyReport: '複製回報',
+    openIssue: '開啟議題',
+    reportMessage: '訊息',
+    reportCopied: '已複製',
   },
 }
 
@@ -342,6 +357,26 @@ for (const terminology of TERMINOLOGIES) {
         }
       })
 
+    })
+
+    describe('report dialog', () => {
+      it('labels the report-bug dialog chrome', () => {
+        setTerminology(terminology)
+        const { body } = render(ReportBug, {
+          props: {
+            open: true,
+            report: 'v1 7',
+            issueLink: { url: 'https://github.com/johnhkchen/mahjong/issues/new', clipboardFirst: false },
+          },
+        })
+        expect(body).toContain(`>${t.reportBug}<`)
+        expect(body).toContain(`aria-label="${t.copyReport}"`)
+        expect(body).toContain(`aria-label="${t.openIssue}"`)
+        expect(body).toContain(`aria-label="${t.reportMessage}"`)
+      })
+    })
+
+    describe('hand-end screens', () => {
       it('labels the next-hand button', () => {
         setTerminology(terminology)
         const dealtWin = foldRecord({ seed: 542630, actions: [] })
