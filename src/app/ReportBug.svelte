@@ -33,10 +33,24 @@
   // Follows `open` imperatively — <dialog> has no declarative "open as modal" prop;
   // showModal()/close() are the only APIs that put it in the top layer versus merely
   // toggling the `open` attribute (which would render it in-flow, not modal).
+  // Feature-detected rather than called unconditionally: jsdom (this project's own
+  // `dom` vitest project) implements the <dialog> ELEMENT but not its showModal/close
+  // METHODS at all (as of jsdom 29), so an unconditional call would throw in every tap
+  // test that ever opens this dialog. The manual open-attribute fallback degrades to a
+  // non-modal, in-flow dialog — strictly worse than showModal()'s inertness, but it is
+  // ONLY ever exercised where showModal doesn't exist to begin with, so no real browser
+  // ever takes this path; App.svelte's own reportOpen input guards (design.md Decision
+  // 8) are what make the paused-input behavior true regardless of which branch runs.
   $effect(() => {
     if (!dialogEl) return
-    if (open && !dialogEl.open) dialogEl.showModal()
-    else if (!open && dialogEl.open) dialogEl.close()
+    const supportsModal = typeof dialogEl.showModal === 'function'
+    if (open && !dialogEl.open) {
+      if (supportsModal) dialogEl.showModal()
+      else dialogEl.setAttribute('open', '')
+    } else if (!open && dialogEl.open) {
+      if (supportsModal) dialogEl.close()
+      else dialogEl.removeAttribute('open')
+    }
   })
 
   // The copy confirmation's own readable beat — same "set true, clear after a fixed
@@ -58,8 +72,9 @@
   bind:this={dialogEl}
   aria-label="report a bug"
   onclose={() => onclose?.()}
+  oncancel={() => onclose?.()}
 >
-  <form method="dialog" class="report">
+  <div class="report">
     <h2>{term('reportBug')}</h2>
     <label class="field">
       <span>{term('reportMessage')}</span>
@@ -84,8 +99,15 @@
         This report is long — copy it above, then paste it into the opened issue.
       </p>
     {/if}
-    <button type="submit" formmethod="dialog" class="close" aria-label="close">close</button>
-  </form>
+    <!-- A plain button with an explicit handler, not form method="dialog": jsdom
+         (this project's own `dom` vitest project) does not implement dialog-owning
+         form submission at all, and a real browser's showModal()-driven dialog is
+         already closed by the $effect above the instant `open` flips — the owner
+         (App.svelte) sets that from this same onclose callback either way. -->
+    <button type="button" class="close" aria-label="close" onclick={() => onclose?.()}>
+      close
+    </button>
+  </div>
 </dialog>
 
 <style>
