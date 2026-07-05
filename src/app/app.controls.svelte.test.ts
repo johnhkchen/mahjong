@@ -21,6 +21,7 @@ afterEach(() => {
   for (const cleanup of cleanups) cleanup()
   cleanups = []
   vi.useRealTimers()
+  vi.restoreAllMocks()
 })
 
 beforeEach(() => {
@@ -123,6 +124,10 @@ describe('the "next hand" control', () => {
 
 describe('the "new game" control', () => {
   it('resets scores to 25000 each and starts a fresh single-hand game', async () => {
+    // newGame() draws its seed from Math.random — the ONE unseeded input in this
+    // otherwise fully-deterministic suite, and the source of a ~1-in-5 flake: the
+    // scripted driver occasionally met a random hand it couldn't finish. Pin it.
+    vi.spyOn(Math, 'random').mockReturnValue(0.42)
     const target = mountApp(SEED)
     await driveToHandEnd(target)
     target.querySelector<HTMLButtonElement>('.next-hand')!.click()
@@ -137,9 +142,15 @@ describe('the "new game" control', () => {
 
     // Reach hand end again on the FRESH game and confirm the score screen now
     // starts from the 25000-each baseline, not whatever hand one/two left carried.
+    // Conservation includes the riichi pot: on this pinned seed a bot's riichi
+    // stick rides the pot across the hand end, and the table now SAYS so — the
+    // 99000-scores-plus-1000-pot split is the fact this assertion pins (it spent
+    // months as a 1-in-5 flake while newGame's seed was unpinned Math.random).
     await driveToHandEnd(target)
     const scores = scoresOf(target)
     expect(scores).not.toBeNull()
-    expect(scores!.reduce((a, b) => a + b, 0)).toBe(100000)
+    const potLabel = target.querySelector('[aria-label="riichi pot"]')
+    const pot = potLabel ? Number(potLabel.textContent!.replace(/\D/g, '')) : 0
+    expect(scores!.reduce((a, b) => a + b, 0) + pot).toBe(100000)
   }, 30_000)
 })

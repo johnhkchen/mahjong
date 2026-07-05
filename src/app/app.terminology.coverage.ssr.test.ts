@@ -49,6 +49,7 @@ const EXPECTED: Record<Terminology, Record<TermKey, string>> = {
     dora: 'dora',
     fu: 'fu',
     han: 'han',
+    pot: 'riichi pot',
   },
   'zh-hant': {
     chi: '吃',
@@ -71,6 +72,7 @@ const EXPECTED: Record<Terminology, Record<TermKey, string>> = {
     dora: '寶牌',
     fu: '符',
     han: '翻',
+    pot: '供託',
   },
 }
 

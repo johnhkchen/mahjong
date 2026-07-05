@@ -33,6 +33,7 @@ export type TermKey =
   | 'dora'
   | 'fu'
   | 'han'
+  | 'pot'
 
 const TERMS: Record<TermKey, Record<Terminology, string>> = {
   chi: { romaji: 'chi', 'zh-hant': '吃' },
@@ -55,6 +56,8 @@ const TERMS: Record<TermKey, Record<Terminology, string>> = {
   dora: { romaji: 'dora', 'zh-hant': '寶牌' },
   fu: { romaji: 'fu', 'zh-hant': '符' },
   han: { romaji: 'han', 'zh-hant': '翻' },
+  // The riichi-stick pot riding the table between hands (supplied sticks, 供託).
+  pot: { romaji: 'riichi pot', 'zh-hant': '供託' },
 }
 
 const STORAGE_KEY = 'mahjong-terminology'

@@ -21,6 +21,7 @@
     onnext,
     furitenTile,
     yakulessTenpai,
+    pot,
   }: {
     table: TableState
     ontap?: (tile: TileId) => void
@@ -34,6 +35,12 @@
     furitenTile?: TileId | null
     /** The player's yakuless-tenpai fact (core's yakulessTenpai, T-009-03-02). */
     yakulessTenpai?: boolean
+    /**
+     * The riichi-stick pot riding the table (game.pot verbatim) — without this
+     * line a stick carried across a ryuukyoku visibly vanishes from the scores;
+     * conservation must be legible: scores + pot is always the full 100000.
+     */
+    pot?: number
   } = $props()
 
   // Seat 0 (East) is the player. Stable copy-sort into canonical kind order via the
@@ -148,6 +155,11 @@
       <span class="label">dora indicator</span>
     </div>
     <span class="label">{table.live.length} tiles left</span>
+    {#if (pot ?? 0) > 0}
+      <!-- aria vocabulary stays terminology-independent (the ponds' precedent);
+           the display term goes through the dictionary. -->
+      <span class="label" aria-label="riichi pot">{term('pot')} {pot}</span>
+    {/if}
     <!-- The hand-end screen: score-breakdown-screen (T-008-03-01) — every yaku with
          its han, dora, fu/points, and the four updated seat scores, all read off
          core's scorer via HandEnd, never computed here. -->

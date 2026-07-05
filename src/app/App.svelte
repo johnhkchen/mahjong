@@ -162,7 +162,13 @@
   function pass() {
     const settled = settleWindow(table, offered, PLAYER, null)
     if (settled !== null) activeHand().push(settled)
-    else dismissed = true // nothing to fold — the houtei dismissal
+    // Dismissal exists ONLY for houtei — the player holds a ron on the final
+    // discard and nothing is foldable. Any OTHER null settle is a stray tap (a
+    // phone double-tap, or a tap landing after the window already resolved):
+    // ignore it. Before this guard a stray pass set dismissed=true and hid every
+    // prompt for the rest of the hand while the engine waited — the live
+    // "prompts stopped appearing" deadlock.
+    else if (win !== null) dismissed = true
     // A decline is never a lost tap (there was no tap) — clear any notice left
     // over from an earlier window rather than let it survive into this one.
     notice = null
@@ -258,7 +264,7 @@
       {TERMINOLOGY_LABEL[otherTerminology(activeTerminology())]}
     </button>
   </header>
-  <Table {table} ontap={tap} scores={seatScores} onnext={newHand} {furitenTile} yakulessTenpai={yakuless} />
+  <Table {table} ontap={tap} scores={seatScores} onnext={newHand} {furitenTile} yakulessTenpai={yakuless} pot={game.pot} />
   <!-- Visibility is the drive predicate family: claim choices or the win offer.
        The claimed tile is the window's when one is open (a claim offer implies
        one); the tsumo and houtei moments have none and the prompt renders
