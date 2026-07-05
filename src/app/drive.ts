@@ -17,9 +17,12 @@
 import {
   callPolicy,
   discardPolicy,
+  foldGame,
   kindOf,
+  parseGameRecord,
   seatView,
   shanten,
+  type GameRecord,
   type HandAction,
   type Player,
   type Seat,
@@ -552,4 +555,76 @@ export function forcedAction(
   if (head.type === 'draw') return head
   if (head.seat === player) return null
   return discardPolicy(seatView(state, head.seat), offered)
+}
+
+/**
+ * The header line's own shape, duplicated from notation.ts's private HEADER_RE
+ * (T-013-02-02: notation.ts's own regex is module-private, and exporting it would
+ * put a second thing on core's public contract for one app-side convenience — the
+ * cross-module-duplication convention record.ts's own header already documents
+ * extensively, applied to a regex instead of a predicate). No capture groups: this
+ * only TESTS for the header shape while scanning a pasted blob for where the real
+ * notation starts — parseGameRecord itself re-validates and extracts the seed for
+ * real, so a false-positive match here still fails loudly at that boundary.
+ */
+const NOTATION_HEADER_RE = /^v[0-9]+ [0-9a-z]+$/
+
+/**
+ * Finds where a pasted blob's notation actually starts. A raw `serializeGameRecord`
+ * paste (no wrapper) has its header on line 1 and passes through unchanged. A full
+ * `buildReportText` paste (message, then a `---`-delimited context block, then the
+ * notation) has other text — the free message, `terminology:`/`hand:`/etc. lines —
+ * ABOVE the header, so this scans for the LAST line matching the header shape and
+ * keeps everything from there on. No header-shaped line anywhere: the whole trimmed
+ * text is handed through unchanged, so parseGameRecord's own line-1 header check
+ * throws its exact, legible error rather than this function silently guessing wrong.
+ */
+function extractNotation(text: string): string {
+  const lines = text.split('\n')
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (NOTATION_HEADER_RE.test(lines[i])) {
+      return lines.slice(i).join('\n')
+    }
+  }
+  return text.trim()
+}
+
+/**
+ * The paste-to-reproduce loader's result (T-013-02-02, E-013's owner half): a
+ * discriminated union, not a bare `GameRecord | null`, because the AC requires
+ * showing "the parser's line/position message" on failure — the same
+ * data-plus-flag shape `IssueLink.clipboardFirst` already uses in this file rather
+ * than bubbling an exception up to the view layer.
+ */
+export type LoadResult =
+  | { readonly ok: true; readonly record: GameRecord; readonly message: null }
+  | { readonly ok: false; readonly record: null; readonly message: string }
+
+/**
+ * Parses a pasted report (raw notation, or a full buildReportText blob) into a
+ * GameRecord, or a failure message to show verbatim instead of loading. Three
+ * steps, each already-existing core logic composed, never reimplemented:
+ * extractNotation finds the notation block; parseGameRecord parses it (syntax and
+ * range only, per its own doc-comment); foldGame then VALIDATES it by folding the
+ * whole thing and discarding the result — parseGameRecord alone would let a
+ * syntactically valid but semantically illegal record (a corrupt or hand-edited
+ * paste) through, which would otherwise crash App.svelte's own reactive
+ * `$derived(foldGame(record))` re-run one tick AFTER the state has already been
+ * replaced, a strictly worse failure than surfacing the identical message here,
+ * before any state is touched.
+ */
+export function loadPastedRecord(text: string): LoadResult {
+  const notationText = extractNotation(text)
+  let record: GameRecord
+  try {
+    record = parseGameRecord(notationText)
+  } catch (error) {
+    return { ok: false, record: null, message: (error as Error).message }
+  }
+  try {
+    foldGame(record)
+  } catch (error) {
+    return { ok: false, record: null, message: (error as Error).message }
+  }
+  return { ok: true, record, message: null }
 }

@@ -290,6 +290,22 @@
     notice = null
   }
 
+  // T-013-02-02's paste-to-reproduce loader (E-013's owner half): wholesale-replace
+  // the record, the same shape newGame() already uses, plus close the dialog and
+  // clear its own message (a message about the DISCARDED game is misleading once a
+  // different hand is loaded). `record` is fully readonly-typed; `hands` is a plain
+  // mutable HandAction[][] (activeHand() pushes onto its last element), so each
+  // hand needs a shallow copy — HandAction's own fields are all readonly, so this
+  // never needs a deep clone.
+  function loadRecord(record: GameRecord) {
+    gameSeed = record.seed
+    hands = record.hands.map((hand) => [...hand])
+    dismissed = false
+    notice = null
+    reportOpen = false
+    reportMessage = ''
+  }
+
   // The reactive fixed point that runs the table: each append re-folds and re-derives
   // `offered`, which re-runs this effect — draws (the player's included) and the
   // bots' policy decisions (discards, calls, wins) land one per tick until
@@ -390,6 +406,7 @@
     {issueLink}
     onmessage={setReportMessage}
     onclose={closeReport}
+    onload={loadRecord}
   />
 </main>
 

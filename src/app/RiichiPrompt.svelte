@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { TileId } from '../core'
   import { term } from './dictionary.svelte'
+  import { MOUNT_GUARD_MS, prefersReducedMotion } from './mount-guard'
   import Tile from './Tile.svelte'
 
   // The P2-crown moment, charter.md's own quoted example ("you're tenpai — declare
@@ -19,6 +20,19 @@
     ondeclare?: () => void
     ondecline?: () => void
   } = $props()
+
+  // T-012-01-01: same mount-input guard as ClaimPrompt.svelte (mount-guard.ts's own
+  // constant, shared so neither prompt's duration can drift from the other) — a
+  // freshly-mounted riichi prompt ignores activations for one beat, presentation-
+  // only (no `disabled`, no visual change).
+  let guarded = $state(true)
+  $effect(() => {
+    const duration = prefersReducedMotion() ? 0 : MOUNT_GUARD_MS
+    const timer = setTimeout(() => {
+      guarded = false
+    }, duration)
+    return () => clearTimeout(timer)
+  })
 </script>
 
 <aside class="prompt riichi" role="group" aria-label="riichi prompt">
@@ -31,10 +45,24 @@
     <li aria-label="stake yaku">riichi is its own yaku, and a win flips extra dora for a chance at more</li>
   </ul>
   <div class="buttons">
-    <button type="button" class="call declare" aria-label={term('declareRiichi')} onclick={() => ondeclare?.()}>
+    <button
+      type="button"
+      class="call declare"
+      aria-label={term('declareRiichi')}
+      onclick={() => {
+        if (!guarded) ondeclare?.()
+      }}
+    >
       {term('declareRiichi')}
     </button>
-    <button type="button" class="pass" aria-label={term('notYet')} onclick={() => ondecline?.()}>
+    <button
+      type="button"
+      class="pass"
+      aria-label={term('notYet')}
+      onclick={() => {
+        if (!guarded) ondecline?.()
+      }}
+    >
       {term('notYet')}
     </button>
   </div>

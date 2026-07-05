@@ -2,6 +2,7 @@
   import { kindOf, type HandAction, type TileId } from '../core'
   import type { ClaimChoice } from './drive'
   import { callTerm } from './dictionary.svelte'
+  import { MOUNT_GUARD_MS, prefersReducedMotion } from './mount-guard'
   import Tile from './Tile.svelte'
 
   // The call/pass prompt: pure input wiring, computation-free. `choices` is
@@ -37,6 +38,23 @@
     onpass?: () => void
     onwin?: () => void
   } = $props()
+
+  // T-012-01-01: a fresh window mounts a fresh ClaimPrompt (App.svelte keys the
+  // console on the window's own identity), and consecutive windows can open within
+  // a couple of BOT_DELAY_MS ticks of each other — close enough that a tap (or the
+  // second half of a phone double-tap) aimed at the closing prompt can land on the
+  // next one's buttons instead. `guarded` starts true and clears itself after one
+  // mount-guard.ts beat, matching the CSS entry transition below; every onclick below
+  // no-ops while it's still true. Presentation-only: nothing about the rendered
+  // button changes (no `disabled`, no class) — only whether the tap does anything.
+  let guarded = $state(true)
+  $effect(() => {
+    const duration = prefersReducedMotion() ? 0 : MOUNT_GUARD_MS
+    const timer = setTimeout(() => {
+      guarded = false
+    }, duration)
+    return () => clearTimeout(timer)
+  })
 </script>
 
 <aside class="prompt" role="group" aria-label="call or pass">
@@ -51,7 +69,9 @@
         type="button"
         class="call win"
         aria-label={win.type === 'ron' ? `${callTerm('ron')} ${kindOf(win.tile)}` : callTerm('tsumo')}
-        onclick={() => onwin?.()}
+        onclick={() => {
+          if (!guarded) onwin?.()
+        }}
       >
         <span class="name">{callTerm(win.type)}</span>
         {#if win.type === 'ron'}<Tile id={win.tile} />{/if}
@@ -67,7 +87,9 @@
           aria-label="{callTerm(choice.type)} {kindOf(choice.tile)} with {choice.uses
             .map(kindOf)
             .join(' ')}"
-          onclick={() => onclaim?.({ type: choice.type, uses: choice.uses })}
+          onclick={() => {
+            if (!guarded) onclaim?.({ type: choice.type, uses: choice.uses })
+          }}
         >
           <span class="name">{callTerm(choice.type)}</span>
           {#each choice.uses as id (id)}<Tile {id} />{/each}
@@ -75,7 +97,14 @@
       {/if}
     {/each}
     {#if canPass}
-      <button type="button" class="pass" aria-label="pass" onclick={() => onpass?.()}>
+      <button
+        type="button"
+        class="pass"
+        aria-label="pass"
+        onclick={() => {
+          if (!guarded) onpass?.()
+        }}
+      >
         pass
       </button>
     {/if}
@@ -160,7 +189,9 @@
      untouched), matching Table.svelte's `.pond li`/`.drawn` shape rather than
      Svelte's `transition:` directive — this codebase's own E-007 convention.
      200ms sits inside App.svelte's 250ms BOT_DELAY_MS tick, so the beat settles
-     before the next forced action could land. */
+     before the next forced action could land. This duration is mount-guard.ts's
+     MOUNT_GUARD_MS, kept in sync with the JS input guard above by hand (CSS can't
+     import the constant) — change one, change both. */
   @media (prefers-reduced-motion: no-preference) {
     .prompt {
       transition:

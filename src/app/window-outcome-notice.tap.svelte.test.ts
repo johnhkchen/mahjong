@@ -36,9 +36,11 @@ import {
 } from '../core'
 import { claimChoices, forcedAction, PLAYER, riichiPrompt, settleWindow, winChoice } from './drive'
 import { callTerm, setTerminology, windTerm, type Terminology } from './dictionary.svelte'
+import { setPromptEveryLegalCall } from './call-prompt-settings.svelte'
 import App from './App.svelte'
 
 const BOT_DELAY_MS = 250
+const MOUNT_GUARD_MS = 200 // ClaimPrompt.svelte/RiichiPrompt.svelte's own mount-guard.ts constant, duplicated for the timer advance
 
 // T-011-02-03: every fixture in this file is driven under both terminologies —
 // dictionary.svelte.ts's `current` rune is module-scoped, so setting it before a
@@ -70,10 +72,18 @@ afterEach(() => {
   cleanups = []
   vi.useRealTimers()
   setTerminology('romaji') // app.terminology.coverage.ssr.test.ts's own reset convention
+  // T-012-01-02: restore the default (filtered) setting — this suite's own step()
+  // driver predates the call-prompt filter and assumes every claim/win prompts.
+  setPromptEveryLegalCall(false)
+  localStorage.clear()
 })
 
 beforeEach(() => {
   vi.useFakeTimers()
+  // The PON_RON_GAME_SEED fixture's pon is one callPolicy itself would decline
+  // (T-012-01-02's research.md) — "prompt every legal call" keeps this suite's
+  // pre-ticket assumption that every offered claim/win is visible intact.
+  setPromptEveryLegalCall(true)
 })
 
 function mountApp(initialSeed: number) {
@@ -134,13 +144,15 @@ async function step(
     const settled = settleWindow(state, offered, PLAYER, null)
     const passBtn = target.querySelector<HTMLButtonElement>('[aria-label="pass"]')
     if (passBtn === null) throw new Error('step: expected a pass button on an offered claim/win')
+    await vi.advanceTimersByTimeAsync(MOUNT_GUARD_MS)
+    flushSync()
     passBtn.click()
     flushSync()
     if (settled === null) throw new Error('step: unexpected dismissal while mining toward a win')
     actions.push(settled)
     return
   }
-  const forced = forcedAction(state, offered, PLAYER)
+  const forced = forcedAction(state, offered, PLAYER, true)
   if (forced !== null) {
     await vi.advanceTimersByTimeAsync(BOT_DELAY_MS)
     flushSync()
@@ -154,6 +166,8 @@ async function step(
     // `term('notYet')` — terminology-dependent, unlike its stable `.pass` class.
     const notYet = target.querySelector<HTMLButtonElement>('.riichi .pass')
     if (notYet === null) throw new Error("step: expected the riichi prompt's decline button")
+    await vi.advanceTimersByTimeAsync(MOUNT_GUARD_MS)
+    flushSync()
     notYet.click()
     flushSync()
     actions.push(rp.decline)
@@ -212,6 +226,8 @@ for (const terminology of TERMINOLOGIES) {
 
         const passBtn = target.querySelector<HTMLButtonElement>('[aria-label="pass"]')
         expect(passBtn).not.toBeNull()
+        await vi.advanceTimersByTimeAsync(MOUNT_GUARD_MS)
+        flushSync()
         passBtn!.click()
         flushSync()
 
@@ -248,6 +264,8 @@ for (const terminology of TERMINOLOGIES) {
         expect(winButton).not.toBeNull()
         expect(noticeEl(target)).toBeNull()
 
+        await vi.advanceTimersByTimeAsync(MOUNT_GUARD_MS)
+        flushSync()
         winButton!.click()
         flushSync()
 
@@ -296,6 +314,8 @@ for (const terminology of TERMINOLOGIES) {
           b.getAttribute('aria-label')?.startsWith(callTerm('pon')),
         )
         expect(ponButton).not.toBeUndefined()
+        await vi.advanceTimersByTimeAsync(MOUNT_GUARD_MS)
+        flushSync()
         ponButton!.click()
         flushSync()
 

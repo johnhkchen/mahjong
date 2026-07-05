@@ -58,6 +58,8 @@ const EXPECTED: Record<Terminology, Record<TermKey, string>> = {
     openIssue: 'open issue',
     reportMessage: 'message',
     reportCopied: 'copied',
+    loadReport: 'load report',
+    pasteReport: 'paste report',
   },
   'zh-hant': {
     chi: '吃',
@@ -88,6 +90,8 @@ const EXPECTED: Record<Terminology, Record<TermKey, string>> = {
     openIssue: '開啟議題',
     reportMessage: '訊息',
     reportCopied: '已複製',
+    loadReport: '載入回報',
+    pasteReport: '貼上回報',
   },
 }
 
@@ -373,6 +377,8 @@ for (const terminology of TERMINOLOGIES) {
         expect(body).toContain(`aria-label="${t.copyReport}"`)
         expect(body).toContain(`aria-label="${t.openIssue}"`)
         expect(body).toContain(`aria-label="${t.reportMessage}"`)
+        expect(body).toContain(`aria-label="${t.pasteReport}"`)
+        expect(body).toContain(`aria-label="${t.loadReport}"`)
       })
     })
 

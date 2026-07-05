@@ -16,6 +16,7 @@ import App from './App.svelte'
 // computed once and frozen (never regenerate: `397 ^ 0x9e3779b1 >>> 0`).
 const RIICHI_GAME_SEED = 2654435388
 const BOT_DELAY_MS = 250 // App.svelte's own pacing constant, duplicated for the timer advance
+const MOUNT_GUARD_MS = 200 // RiichiPrompt.svelte's own mount-guard.ts constant, duplicated for the timer advance
 
 let cleanups: Array<() => void> = []
 afterEach(() => {
@@ -73,6 +74,16 @@ describe('the riichi prompt, end to end', () => {
     const target = mountApp(RIICHI_GAME_SEED)
     await tickUntil(target, () => target.querySelector('[aria-label="declare riichi"]') !== null)
 
+    // T-012-01-01: a tap landing inside the prompt's mount-guard beat is inert — the
+    // button is rendered but the activation does nothing, no pond/hand change at all.
+    target.querySelector<HTMLButtonElement>('[aria-label="declare riichi"]')!.click()
+    flushSync()
+    expect(eastPondKinds(target)).not.toContain('6z')
+    expect(target.querySelector('[aria-label="riichi prompt"]')).not.toBeNull()
+
+    // The same activation, after the beat, lands normally.
+    await vi.advanceTimersByTimeAsync(MOUNT_GUARD_MS)
+    flushSync()
     target.querySelector<HTMLButtonElement>('[aria-label="declare riichi"]')!.click()
     flushSync()
 
@@ -101,6 +112,8 @@ describe('the riichi prompt, end to end', () => {
     const target = mountApp(RIICHI_GAME_SEED)
     await tickUntil(target, () => target.querySelector('[aria-label="not yet"]') !== null)
 
+    await vi.advanceTimersByTimeAsync(MOUNT_GUARD_MS)
+    flushSync()
     target.querySelector<HTMLButtonElement>('[aria-label="not yet"]')!.click()
     flushSync()
 

@@ -54,19 +54,32 @@ import {
   settleWindow,
   winChoice,
 } from './drive'
+import { setPromptEveryLegalCall } from './call-prompt-settings.svelte'
 import App from './App.svelte'
 
 const BOT_DELAY_MS = 250
+const MOUNT_GUARD_MS = 200 // ClaimPrompt.svelte/RiichiPrompt.svelte's own mount-guard.ts constant, duplicated for the timer advance
 
 let cleanups: Array<() => void> = []
 afterEach(() => {
   for (const cleanup of cleanups) cleanup()
   cleanups = []
   vi.useRealTimers()
+  // T-012-01-02: this suite's own generic step() driver predates the call-prompt
+  // filter and assumes every offered claim/win renders a prompt — restore the
+  // default (filtered) setting so no toggle state leaks into a sibling file.
+  setPromptEveryLegalCall(false)
+  localStorage.clear()
 })
 
 beforeEach(() => {
   vi.useFakeTimers()
+  // Unrelated to this file's own regression (the dismissed-reset bug): this
+  // suite's fixtures include at least one claim callPolicy itself would decline
+  // (T-012-01-02's research.md), which the default filtered setting would auto-
+  // pass without ever rendering a prompt — "prompt every legal call" restores
+  // this suite's pre-ticket assumption that every offered claim/win is visible.
+  setPromptEveryLegalCall(true)
 })
 
 function mountApp(initialSeed: number) {
@@ -124,13 +137,15 @@ async function step(
     const settled = settleWindow(state, offered, PLAYER, null)
     const passBtn = target.querySelector<HTMLButtonElement>('[aria-label="pass"]')
     if (passBtn === null) throw new Error('step: expected a pass button on an offered claim/win')
+    await vi.advanceTimersByTimeAsync(MOUNT_GUARD_MS)
+    flushSync()
     passBtn.click()
     flushSync()
     if (settled === null) return 'dismissed'
     actions.push(settled)
     return 'acted'
   }
-  const forced = forcedAction(state, offered, PLAYER)
+  const forced = forcedAction(state, offered, PLAYER, true)
   if (forced !== null) {
     await vi.advanceTimersByTimeAsync(BOT_DELAY_MS)
     flushSync()
@@ -141,6 +156,8 @@ async function step(
   if (rp !== null) {
     const notYet = target.querySelector<HTMLButtonElement>('[aria-label="not yet"]')
     if (notYet === null) throw new Error('step: expected the riichi prompt\'s decline button')
+    await vi.advanceTimersByTimeAsync(MOUNT_GUARD_MS)
+    flushSync()
     notYet.click()
     flushSync()
     actions.push(rp.decline)

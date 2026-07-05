@@ -15,6 +15,7 @@ import App from './App.svelte'
 
 const SEED = 1
 const BOT_DELAY_MS = 250 // App.svelte's own pacing constant, duplicated for the timer advance
+const MOUNT_GUARD_MS = 200 // ClaimPrompt.svelte's own mount-guard.ts constant, duplicated for the timer advance
 
 let cleanups: Array<() => void> = []
 afterEach(() => {
@@ -67,12 +68,18 @@ async function driveToHandEnd(target: HTMLElement, maxTicks = 500): Promise<void
       '[aria-label="tsumo"], [aria-label^="ron "]',
     )
     if (win) {
+      // T-012-01-01: the win/pass buttons belong to ClaimPrompt, which ignores
+      // activations for one mount-guard beat — advance past it before tapping.
+      await vi.advanceTimersByTimeAsync(MOUNT_GUARD_MS)
+      flushSync()
       win.click()
       flushSync()
       continue
     }
     const pass = target.querySelector<HTMLButtonElement>('[aria-label="pass"]')
     if (pass) {
+      await vi.advanceTimersByTimeAsync(MOUNT_GUARD_MS)
+      flushSync()
       pass.click()
       flushSync()
       continue

@@ -41,6 +41,8 @@ export type TermKey =
   | 'openIssue'
   | 'reportMessage'
   | 'reportCopied'
+  | 'loadReport'
+  | 'pasteReport'
 
 const TERMS: Record<TermKey, Record<Terminology, string>> = {
   chi: { romaji: 'chi', 'zh-hant': '吃' },
@@ -78,6 +80,10 @@ const TERMS: Record<TermKey, Record<Terminology, string>> = {
   openIssue: { romaji: 'open issue', 'zh-hant': '開啟議題' },
   reportMessage: { romaji: 'message', 'zh-hant': '訊息' },
   reportCopied: { romaji: 'copied', 'zh-hant': '已複製' },
+  // T-013-02-02's paste-to-reproduce loader — the owner's half of E-013, living
+  // inside this same dialog (design.md Decision 1).
+  loadReport: { romaji: 'load report', 'zh-hant': '載入回報' },
+  pasteReport: { romaji: 'paste report', 'zh-hant': '貼上回報' },
 }
 
 const STORAGE_KEY = 'mahjong-terminology'

@@ -1,5 +1,6 @@
 <script lang="ts">
-  import type { IssueLink } from './drive'
+  import type { GameRecord } from '../core'
+  import { loadPastedRecord, type IssueLink } from './drive'
   import { term } from './dictionary.svelte'
 
   // The reporter's half (T-013-02-01, E-013): pure input wiring like every other
@@ -19,6 +20,7 @@
     issueLink,
     onmessage,
     onclose,
+    onload,
   }: {
     open: boolean
     message?: string
@@ -26,6 +28,7 @@
     issueLink: IssueLink
     onmessage?: (text: string) => void
     onclose?: () => void
+    onload?: (record: GameRecord) => void
   } = $props()
 
   let dialogEl: HTMLDialogElement | undefined = $state()
@@ -66,6 +69,24 @@
       copied = false
     }, COPIED_DURATION_MS)
   }
+
+  // T-013-02-02's paste-to-reproduce loader (E-013's owner half) — purely local
+  // state (design.md Decision 5): nothing outside this component ever needs the
+  // paste box's live text or its transient error, only the fact a load SUCCEEDED
+  // (via `onload`), the same routing shape `onmessage`/`onclose` already use.
+  let pasteText = $state('')
+  let pasteError = $state<string | null>(null)
+
+  function loadPasted() {
+    const result = loadPastedRecord(pasteText)
+    if (result.ok) {
+      pasteError = null
+      pasteText = ''
+      onload?.(result.record)
+    } else {
+      pasteError = result.message
+    }
+  }
 </script>
 
 <dialog
@@ -98,6 +119,23 @@
       <p class="clipboard-first-note">
         This report is long — copy it above, then paste it into the opened issue.
       </p>
+    {/if}
+    <!-- T-013-02-02's paste-to-reproduce loader: a full copied report (message +
+         context + notation) or a raw notation blob both load — drive.ts's
+         loadPastedRecord finds the notation block either way. -->
+    <label class="field">
+      <span>{term('pasteReport')}</span>
+      <textarea
+        aria-label={term('pasteReport')}
+        placeholder={term('pasteReport')}
+        bind:value={pasteText}
+      ></textarea>
+    </label>
+    <button type="button" class="load" aria-label={term('loadReport')} onclick={loadPasted}>
+      {term('loadReport')}
+    </button>
+    {#if pasteError !== null}
+      <p class="paste-error">{pasteError}</p>
     {/if}
     <!-- A plain button with an explicit handler, not form method="dialog": jsdom
          (this project's own `dom` vitest project) does not implement dialog-owning
@@ -187,6 +225,7 @@
 
   .copy,
   .issue,
+  .load,
   .close {
     display: inline-flex;
     align-items: center;
@@ -216,5 +255,11 @@
     margin: 0;
     font-size: 0.75rem;
     color: #a8c7b8;
+  }
+
+  .paste-error {
+    margin: 0;
+    font-size: 0.75rem;
+    color: #e08a8a;
   }
 </style>

@@ -18,10 +18,14 @@ import { describe, expect, it } from 'vitest'
 import {
   callPolicy,
   discardPolicy,
+  foldGame,
   foldRecord,
+  handSeedOf,
   kindOf,
   legalActions,
+  parseGameRecord,
   seatView,
+  serializeGameRecord,
   shanten,
   type HandAction,
   type TileId,
@@ -33,6 +37,7 @@ import {
   claimWindowInterrupts,
   forcedAction,
   GITHUB_REPO,
+  loadPastedRecord,
   MAX_ISSUE_URL_LENGTH,
   PLAYER,
   promptChoices,
@@ -1277,5 +1282,91 @@ describe('buildIssueUrl', () => {
     expect(link.url.length).toBe(MAX_ISSUE_URL_LENGTH)
     expect(link.clipboardFirst).toBe(false)
     expect(link.url).toContain('y'.repeat(target))
+  })
+})
+
+describe('loadPastedRecord', () => {
+  // foldGame folds hand 0 from handSeedOf(gameSeed, 0), NOT gameSeed directly
+  // (game.ts's own per-hand seed derivation) — the fixture's actions must be built
+  // against THAT wall, or foldGame (not parseGameRecord) rejects the fixture itself.
+  const dealtHand0 = foldRecord({ seed: handSeedOf(SEED, 0), actions: [] })
+  const fixture = { seed: SEED, hands: [tsumogiriTurns(dealtHand0.live, 4)] }
+
+  it('parses a raw serializeGameRecord paste with no wrapper', () => {
+    const notation = serializeGameRecord(fixture)
+    const result = loadPastedRecord(notation)
+    expect(result.ok).toBe(true)
+    expect(result.record).toEqual(fixture)
+    expect(result.message).toBeNull()
+  })
+
+  it('extracts the notation out of a full buildReportText-shaped paste', () => {
+    const notation = serializeGameRecord(fixture)
+    const blob = buildReportText({
+      message: 'the chi button disappeared',
+      notation,
+      terminology: 'romaji',
+      handIndex: 0,
+      actionCount: fixture.hands[0].length,
+      origin: 'https://mahjong.b28.dev',
+    })
+    const result = loadPastedRecord(blob)
+    expect(result.ok).toBe(true)
+    expect(result.record).toEqual(fixture)
+  })
+
+  it('picks the LAST header-shaped line, not a fake one embedded in free text', () => {
+    const notation = serializeGameRecord(fixture)
+    const blob = ['a message that happens to contain v1 abc', 'more context', notation].join('\n')
+    const result = loadPastedRecord(blob)
+    expect(result.ok).toBe(true)
+    expect(result.record).toEqual(fixture)
+  })
+
+  it('surfaces parseGameRecord\'s exact message on malformed notation', () => {
+    const malformed = 'v1 1\nZZ00'
+    let expectedMessage = ''
+    try {
+      parseGameRecord(malformed)
+      throw new Error('expected parseGameRecord to throw for this fixture')
+    } catch (error) {
+      expectedMessage = (error as Error).message
+    }
+    const result = loadPastedRecord(malformed)
+    expect(result.ok).toBe(false)
+    expect(result.record).toBeNull()
+    expect(result.message).toBe(expectedMessage)
+  })
+
+  it('surfaces the whole trimmed text through parseGameRecord when no header line exists', () => {
+    const noHeader = 'not notation at all'
+    let expectedMessage = ''
+    try {
+      parseGameRecord(noHeader)
+      throw new Error('expected parseGameRecord to throw for this fixture')
+    } catch (error) {
+      expectedMessage = (error as Error).message
+    }
+    const result = loadPastedRecord(noHeader)
+    expect(result.ok).toBe(false)
+    expect(result.message).toBe(expectedMessage)
+  })
+
+  it("surfaces foldGame's own message for a syntactically valid but illegal record", () => {
+    // Two empty hand lines: hand 0 never ends (an empty action log stays 'playing'
+    // forever), so a second hand line is corruption foldGame itself rejects — the
+    // fold-validation step this loader adds beyond parseGameRecord's own checks.
+    const illegal = { seed: SEED, hands: [[], []] }
+    const notation = serializeGameRecord(illegal)
+    let expectedMessage = ''
+    try {
+      foldGame(parseGameRecord(notation))
+      throw new Error('expected foldGame to throw for this fixture')
+    } catch (error) {
+      expectedMessage = (error as Error).message
+    }
+    const result = loadPastedRecord(notation)
+    expect(result.ok).toBe(false)
+    expect(result.message).toBe(expectedMessage)
   })
 })

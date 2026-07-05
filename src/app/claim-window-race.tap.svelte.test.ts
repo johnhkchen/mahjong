@@ -30,6 +30,7 @@ import { callTerm, setTerminology, windTerm, type Terminology } from './dictiona
 import App from './App.svelte'
 
 const BOT_DELAY_MS = 250 // App.svelte's own pacing constant, duplicated per convention
+const MOUNT_GUARD_MS = 200 // ClaimPrompt.svelte's own mount-guard.ts constant, duplicated per convention
 
 // T-011-02-03: the whole lifecycle walk (open → lose → notice → reopen → remount →
 // cascade-preempt) runs under both terminologies — the DOM-structural assertions
@@ -118,6 +119,12 @@ for (const terminology of TERMINOLOGIES) {
         expect(target.querySelector('[aria-label="west melds"]')).toBeNull()
 
         const handTilesBefore = target.querySelectorAll('[aria-label="your hand"] button').length
+
+        // T-012-01-01: past the mount-guard beat before the player's tap — this
+        // prompt has been up since before the race itself, so the beat is long since
+        // over, but a bare click here would otherwise silently no-op.
+        await vi.advanceTimersByTimeAsync(MOUNT_GUARD_MS)
+        flushSync()
 
         // The player taps his only claim — and loses the window to West's pon: rules-
         // correct atamahane/priority (pon precedes chi), but nothing in the rendered
