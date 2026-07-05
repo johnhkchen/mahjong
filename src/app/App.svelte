@@ -4,12 +4,16 @@
     furitenSeal,
     legalActions,
     seatView,
+    serializeGameRecord,
     yakulessTenpai,
     type GameRecord,
     type HandAction,
     type TileId,
   } from '../core'
   import {
+    buildIssueUrl,
+    buildReportText,
+    claimWindowInterrupts,
     forcedAction,
     PLAYER,
     promptChoices,
@@ -24,8 +28,10 @@
     type ClaimChoice,
     type WindowOutcome,
   } from './drive'
+  import { promptEveryLegalCall, setPromptEveryLegalCall } from './call-prompt-settings.svelte'
   import ClaimPrompt from './ClaimPrompt.svelte'
   import { activeTerminology, setTerminology, term, type Terminology } from './dictionary.svelte'
+  import ReportBug from './ReportBug.svelte'
   import RiichiPrompt from './RiichiPrompt.svelte'
   import Table from './Table.svelte'
   import WindowNotice from './WindowNotice.svelte'
@@ -71,7 +77,18 @@
   // predicate family in drive.ts). The tsumo point is the family's tap-state
   // member: the loop waits there for the discard choice regardless, and the win
   // button simply joins the live tap surface.
-  const prompt = $derived(promptChoices(offered, PLAYER))
+  // T-012-01-02: a claim window only renders when it's interrupt-worthy — a win,
+  // the "prompt every legal call" toggle, or callPolicy itself would take one of
+  // the offered claims (the same accept rule every bot already calls, reused
+  // rather than re-derived). A window that fails all three auto-passes through
+  // forcedAction's existing settleWindow arms below, never rendering a prompt at
+  // all — claimsInterrupt is the single fact both `prompt`'s visibility and the
+  // loop's wait (in the $effect below) now consult, keeping them one predicate
+  // family exactly as promptChoices/claimChoices always were.
+  const claimsInterrupt = $derived(
+    claimWindowInterrupts(table, offered, PLAYER, promptEveryLegalCall()),
+  )
+  const prompt = $derived(claimsInterrupt ? promptChoices(offered, PLAYER) : [])
   const win = $derived(winChoice(offered, PLAYER))
   // A window's own identity (T-011-02-02): the claimable discard's seat+tile, the
   // same vocabulary record.ts's `claimable` field already uses. A string (not the
@@ -117,6 +134,43 @@
   const furitenTile = $derived(furitenSeal(table, PLAYER))
   const yakuless = $derived(yakulessTenpai(table, PLAYER))
 
+  // T-013-02-01's report-bug dialog (E-013): a bug report IS a hand log
+  // (architecture.md §2), so the report text is just the record's OWN notation plus
+  // context, formatted by drive.ts's pure buildReportText — this file only supplies
+  // the values, never assembles the string itself. `reportOpen` gates both the
+  // dialog's own showModal()/close() (ReportBug.svelte's own $effect) and the input
+  // guards below (design.md Decision 8 — belt-and-suspenders with the native modal's
+  // own inertness, and the one thing this app's own jsdom tests can observe).
+  let reportOpen = $state(false)
+  let reportMessage = $state('')
+  const handIndex = $derived(hands.length - 1)
+  const actionCount = $derived(activeHand().length)
+  const origin = $derived(typeof location !== 'undefined' ? location.origin : 'offline')
+  const reportNotation = $derived(serializeGameRecord(record))
+  const reportText = $derived(
+    buildReportText({
+      message: reportMessage,
+      notation: reportNotation,
+      terminology: activeTerminology(),
+      handIndex,
+      actionCount,
+      origin,
+    }),
+  )
+  const issueLink = $derived(buildIssueUrl('Bug report', reportText))
+
+  function openReport() {
+    reportOpen = true
+  }
+
+  function closeReport() {
+    reportOpen = false
+  }
+
+  function setReportMessage(text: string) {
+    reportMessage = text
+  }
+
   // Pacing is presentation: one forced action per tick keeps ponds and the wall
   // counter landing visibly, action by action, instead of a whole bot round at once.
   const BOT_DELAY_MS = 250
@@ -135,6 +189,13 @@
     setTerminology(otherTerminology(activeTerminology()))
   }
 
+  // The call-prompt-filter toggle's own button (T-012-01-02): names the mode a tap
+  // switches TO, the identical convention TERMINOLOGY_LABEL's button already uses —
+  // "prompt every call" while filtered (the default), "quiet calls" once restored.
+  function toggleCallPrompting() {
+    setPromptEveryLegalCall(!promptEveryLegalCall())
+  }
+
   // The active hand's growing action log — always the record's LAST element.
   // Read fresh on every call (never cached) so a push always lands on whichever
   // hand is currently active, across a next-hand append.
@@ -143,6 +204,10 @@
   }
 
   function tap(tile: TileId) {
+    // T-013-02-01 (design.md Decision 8): the table is paused while the report
+    // dialog is open — belt-and-suspenders with the native <dialog>'s own modal
+    // inertness, and the one guard this app's own jsdom tests can observe directly.
+    if (reportOpen) return
     const action = tapDiscard(offered, PLAYER, tile)
     if (action !== null) activeHand().push(action)
   }
@@ -152,6 +217,7 @@
   // wins the window (offered position is the rules' precedence) — a tapped chi can
   // lose to a bot's pon, any claim to a bot's ron, exactly as at a real table.
   function claim(choice: ClaimChoice) {
+    if (reportOpen) return
     const action = tapClaim(offered, PLAYER, choice)
     if (action === null) return
     const settled = settleWindow(table, offered, PLAYER, action)
@@ -160,6 +226,7 @@
   }
 
   function pass() {
+    if (reportOpen) return
     const settled = settleWindow(table, offered, PLAYER, null)
     if (settled !== null) activeHand().push(settled)
     // Dismissal exists ONLY for houtei — the player holds a ron on the final
@@ -175,7 +242,7 @@
   }
 
   function takeWin() {
-    if (win === null) return
+    if (reportOpen || win === null) return
     const settled = settleWindow(table, offered, PLAYER, win)
     if (settled !== null) activeHand().push(settled)
     notice = windowOutcome(win, settled)
@@ -185,12 +252,12 @@
   // settleWindow arbitration needed (this is the player's own-turn decision, not a
   // claim window another seat could also answer).
   function declareRiichi() {
-    if (riichi === null) return
+    if (reportOpen || riichi === null) return
     activeHand().push(riichi.declare)
   }
 
   function declineRiichi() {
-    if (riichi === null) return
+    if (reportOpen || riichi === null) return
     activeHand().push(riichi.decline)
   }
 
@@ -231,7 +298,7 @@
   // or the empty offering at ryuukyoku. Cleanup drops the pending timer on re-run
   // and unmount. $effect never runs in SSR, where the dealt fold renders statically.
   $effect(() => {
-    const action = forcedAction(table, offered, PLAYER)
+    const action = forcedAction(table, offered, PLAYER, promptEveryLegalCall())
     if (action === null) return
     const timer = setTimeout(() => activeHand().push(action), BOT_DELAY_MS)
     return () => clearTimeout(timer)
@@ -262,6 +329,16 @@
       aria-label={`switch to ${TERMINOLOGY_LABEL[otherTerminology(activeTerminology())]}`}
     >
       {TERMINOLOGY_LABEL[otherTerminology(activeTerminology())]}
+    </button>
+    <button
+      class="call-prompt-toggle"
+      onclick={toggleCallPrompting}
+      aria-label={promptEveryLegalCall() ? term('quietCalls') : term('promptEveryCall')}
+    >
+      {promptEveryLegalCall() ? term('quietCalls') : term('promptEveryCall')}
+    </button>
+    <button class="report-bug-toggle" onclick={openReport} aria-label={term('reportBug')}>
+      {term('reportBug')}
     </button>
   </header>
   <Table {table} ontap={tap} scores={seatScores} onnext={newHand} {furitenTile} yakulessTenpai={yakuless} pot={game.pot} />
@@ -306,6 +383,14 @@
       <p class="hint">{hint} away from {term('tenpai')}</p>
     {/if}
   </div>
+  <ReportBug
+    open={reportOpen}
+    message={reportMessage}
+    report={reportText}
+    {issueLink}
+    onmessage={setReportMessage}
+    onclose={closeReport}
+  />
 </main>
 
 <style>
@@ -373,7 +458,9 @@
      app.controls.svelte.test.ts's `querySelector('.new-game')`), so the toggle gets
      its own class and only borrows the declarations (design.md Decision 3). */
   .new-game,
-  .terminology-toggle {
+  .terminology-toggle,
+  .call-prompt-toggle,
+  .report-bug-toggle {
     font: inherit;
     font-size: 0.75rem;
     letter-spacing: 0.15em;
@@ -387,7 +474,9 @@
     cursor: pointer;
   }
   .new-game:active,
-  .terminology-toggle:active {
+  .terminology-toggle:active,
+  .call-prompt-toggle:active,
+  .report-bug-toggle:active {
     background: #1c3a2c;
   }
 </style>
