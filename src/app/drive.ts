@@ -119,6 +119,36 @@ export function promptChoices(offered: readonly HandAction[], player: Seat): Han
   })
 }
 
+/**
+ * Whether `player`'s claim window, if one is open, should interrupt with a prompt
+ * at all — the fourth member of promptChoices's own "one predicate family"
+ * (T-012-01-02): `forcedAction`'s wait condition and the app's render condition both
+ * consult this instead of the raw `claimChoices` length, so "does the prompt show"
+ * and "does the loop wait" stay the identical fact they always were. False whenever
+ * there is no claim window for `player` at all (never invokes callPolicy off a
+ * window — callPolicy throws for a seat holding neither ron nor claim offers).
+ * `promptEveryLegalCall` (the persisted "prompt every legal call" toggle) always
+ * interrupts when true — the pre-ticket behavior, restorable live. Otherwise a
+ * window interrupts exactly when callPolicy — the SAME accept rule every bot
+ * already calls at its own claim windows and houtei, reused rather than
+ * re-derived — would take something other than the decline (the offered draw): a
+ * window whose only offers callPolicy would decline is not interrupt-worthy, and
+ * auto-passes through settleWindow's existing stale-window arm untouched. Wins are
+ * never filtered here — winChoice governs its own prompt independently at every
+ * one of this function's call sites.
+ */
+export function claimWindowInterrupts(
+  state: TableState,
+  offered: readonly HandAction[],
+  player: Seat,
+  promptEveryLegalCall: boolean,
+): boolean {
+  const claims = claimChoices(offered, player)
+  if (claims.length === 0) return false
+  if (promptEveryLegalCall) return true
+  return callPolicy(seatView(state, player), offered).type !== 'draw'
+}
+
 /** Ordered equality — `uses` order is canonical legalActions output, echoed back. */
 function usesEqual(a: readonly TileId[], b: readonly TileId[]): boolean {
   return a.length === b.length && a.every((tile, i) => tile === b[i])
@@ -420,15 +450,100 @@ export function tapDiscard(
  * the frozen order's anchor: the draw at pre-draw states, the first hand discard
  * otherwise, always the turn seat — and every ryuukyoku offering (rons only) was
  * consumed by the guards above.
+ *
+ * `promptEveryLegalCall` (T-012-01-02) is threaded straight into `claimWindowInterrupts`,
+ * which replaces the raw claimChoices-length wait check: a claim window whose only
+ * offers callPolicy would decline no longer waits when the toggle is off — it falls
+ * through to the SAME arms below that already settle a bot-only window (or fold the
+ * stale head draw), so the auto-pass is byte-identical to what a tap on "pass" would
+ * have produced, never a new code path.
  */
+/**
+ * The report dialog's raw material (T-013-02-01): everything a bug report needs
+ * besides its own delivery mechanism. `notation` is the caller's own
+ * `serializeGameRecord(record)` output — this module stays DOM-free and does not call
+ * into core's notation module itself, just formats a string already handed to it, the
+ * same "pure function over already-computed values" shape every other drive.ts export
+ * holds. `terminology` is a plain string (dictionary.svelte.ts's `Terminology`, typed
+ * loosely here to avoid drive.ts importing a `.svelte.ts` module's type for one field).
+ */
+export interface BugReport {
+  readonly message: string
+  readonly notation: string
+  readonly terminology: string
+  readonly handIndex: number
+  readonly actionCount: number
+  readonly origin: string
+}
+
+/**
+ * The one report string both delivery paths (clipboard, GitHub issue body) send —
+ * the freeform message first (what a maintainer reads first), then the context block,
+ * then the notation itself (a bug report IS a hand log, architecture.md §2). Message
+ * is embedded verbatim, newlines included: this is a private text blob, not markup, so
+ * nothing needs escaping.
+ */
+export function buildReportText(report: BugReport): string {
+  return [
+    report.message,
+    '',
+    '---',
+    `terminology: ${report.terminology}`,
+    `hand: ${report.handIndex}`,
+    `actions: ${report.actionCount}`,
+    `origin: ${report.origin}`,
+    '---',
+    report.notation,
+  ].join('\n')
+}
+
+/** The bug-tracker this app's issues live in (E-013's own scope). */
+export const GITHUB_REPO = 'johnhkchen/mahjong'
+
+/** The AC's "~6k chars" safe-URL threshold, past which the issue button falls back to
+ *  a short clipboard-first body rather than truncating (silent truncation would ship a
+ *  corrupted, unparseable report — see design.md Decision 3). */
+export const MAX_ISSUE_URL_LENGTH = 6000
+
+/** A prefilled-issue link, plus whether it fell back to the short body (the dialog's
+ *  own cue to show the "paste from clipboard" instruction). */
+export interface IssueLink {
+  readonly url: string
+  readonly clipboardFirst: boolean
+}
+
+const CLIPBOARD_FIRST_BODY =
+  'This report is long — paste the copied report into this issue instead.'
+
+/**
+ * A prefilled `github.com/.../issues/new` URL for `GITHUB_REPO`. When the fully
+ * encoded URL would exceed `MAX_ISSUE_URL_LENGTH`, the body is replaced with a short,
+ * fixed clipboard-first instruction instead of being truncated — `title` is always
+ * preserved either way.
+ */
+export function buildIssueUrl(title: string, body: string): IssueLink {
+  const base = `https://github.com/${GITHUB_REPO}/issues/new`
+  const encodedTitle = encodeURIComponent(title)
+  const full = `${base}?title=${encodedTitle}&body=${encodeURIComponent(body)}`
+  if (full.length <= MAX_ISSUE_URL_LENGTH) return { url: full, clipboardFirst: false }
+  return {
+    url: `${base}?title=${encodedTitle}&body=${encodeURIComponent(CLIPBOARD_FIRST_BODY)}`,
+    clipboardFirst: true,
+  }
+}
+
 export function forcedAction(
   state: TableState,
   offered: readonly HandAction[],
   player: Seat,
+  promptEveryLegalCall: boolean,
 ): HandAction | null {
   const head = offered[0]
   if (head === undefined) return null
-  if (claimChoices(offered, player).length > 0 || winChoice(offered, player) !== null) {
+  if (
+    claimWindowInterrupts(state, offered, player, promptEveryLegalCall) ||
+    winChoice(offered, player) !== null
+  ) {
     return null
   }
   if (botSeatsHoldingOffers(offered, player).length > 0) {

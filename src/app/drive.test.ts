@@ -27,8 +27,13 @@ import {
   type TileId,
 } from '../core'
 import {
+  buildIssueUrl,
+  buildReportText,
   claimChoices,
+  claimWindowInterrupts,
   forcedAction,
+  GITHUB_REPO,
+  MAX_ISSUE_URL_LENGTH,
   PLAYER,
   promptChoices,
   riichiPrompt,
@@ -304,9 +309,42 @@ describe('promptChoices', () => {
       // And therefore: wherever the prompt shows, the loop waits — the prompt owns
       // the state, and only its taps (through settleWindow) may resolve it.
       if (promptChoices(offered, PLAYER).length > 0) {
-        expect(forcedAction(state, offered, PLAYER)).toBeNull()
+        expect(forcedAction(state, offered, PLAYER, true)).toBeNull()
       }
     }
+  })
+})
+
+// T-012-01-02: the fourth member of the "one predicate family" — whether a claim
+// window interrupts with a prompt at all. Every fixture below is cross-checked
+// directly against callPolicy (never a hardcoded true/false), the double-keyed
+// oracle convention this file uses throughout.
+describe('claimWindowInterrupts', () => {
+  it('is false at every windowless state, without ever invoking callPolicy (it would throw)', () => {
+    for (const state of [dealt, afterEastDraw, beforeSouthDraw, afterSouthDraw, exhausted]) {
+      const offered = legalActions(state)
+      expect(claimWindowInterrupts(state, offered, PLAYER, false)).toBe(false)
+      expect(claimWindowInterrupts(state, offered, PLAYER, true)).toBe(false)
+    }
+  })
+
+  it('is false by default at a window callPolicy would decline every offer of (seed 3)', () => {
+    const offered = legalActions(raceWindow3)
+    expect(claimChoices(offered, PLAYER).length).toBeGreaterThan(0)
+    expect(callPolicy(seatView(raceWindow3, PLAYER), offered).type).toBe('draw')
+    expect(claimWindowInterrupts(raceWindow3, offered, PLAYER, false)).toBe(false)
+  })
+
+  it('the toggle restores true regardless of the policy verdict, at the same declined window', () => {
+    const offered = legalActions(raceWindow3)
+    expect(claimWindowInterrupts(raceWindow3, offered, PLAYER, true)).toBe(true)
+  })
+
+  it('is true by default at a window callPolicy would accept an offer of (seed 212, the kan anchor)', () => {
+    const offered = legalActions(kanWindow212)
+    expect(callPolicy(seatView(kanWindow212, PLAYER), offered).type).not.toBe('draw')
+    expect(claimWindowInterrupts(kanWindow212, offered, PLAYER, false)).toBe(true)
+    expect(claimWindowInterrupts(kanWindow212, offered, PLAYER, true)).toBe(true)
   })
 })
 
@@ -489,7 +527,7 @@ describe('settleWindow', () => {
     ]
     for (const state of anchors) {
       const offered = legalActions(state)
-      const forced = forcedAction(state, offered, PLAYER)
+      const forced = forcedAction(state, offered, PLAYER, true)
       const prompts =
         claimChoices(offered, PLAYER).length > 0 || winChoice(offered, PLAYER) !== null
       // The prompt up ⇒ the loop waits; its taps and its decline own the state.
@@ -627,7 +665,7 @@ describe('winChoice', () => {
     expect(winChoice(offered, 3)).toEqual({ type: 'ron', seat: 3, tile: 72 })
     expect(winChoice(offered, PLAYER)).toBeNull()
     // And the loop takes it: a bot never declines its ron (callPolicy's first arm).
-    expect(forcedAction(botRonWindow, offered, PLAYER)).toBe(offered[1])
+    expect(forcedAction(botRonWindow, offered, PLAYER, true)).toBe(offered[1])
   })
 
   it('is null where core withholds the offer: furiten and yakuless completions', () => {
@@ -784,7 +822,7 @@ describe('forcedAction', () => {
   it("forces the player's own draw — a draw is never a choice", () => {
     const offered = legalActions(dealt)
     expect(offered).toHaveLength(1)
-    expect(forcedAction(dealt, offered, PLAYER)).toBe(offered[0])
+    expect(forcedAction(dealt, offered, PLAYER, true)).toBe(offered[0])
   })
 
   it('settles a bot-only window whose consulted bot declines — the draw is forced, the window stales', () => {
@@ -796,7 +834,7 @@ describe('forcedAction', () => {
     expect(offered[0]).toEqual({ type: 'draw', seat: 1 })
     // Oracle: South's own callPolicy answer is the decline (the offered draw).
     expect(callPolicy(seatView(beforeSouthDraw, 1), offered)).toBe(offered[0])
-    expect(forcedAction(beforeSouthDraw, offered, PLAYER)).toBe(offered[0])
+    expect(forcedAction(beforeSouthDraw, offered, PLAYER, true)).toBe(offered[0])
   })
 
   it('waits (null) when the player may claim — even though a bot claim is accepted behind the prompt', () => {
@@ -805,18 +843,36 @@ describe('forcedAction', () => {
     // South's pon folds only through the prompt's answer (the settleWindow suite).
     const offered = legalActions(raceWindow3)
     expect(offered[0]).toEqual({ type: 'draw', seat: 0 })
-    expect(forcedAction(raceWindow3, offered, PLAYER)).toBeNull()
+    expect(forcedAction(raceWindow3, offered, PLAYER, true)).toBeNull()
   })
 
   it("waits (null) when the player's pon sits behind a bot's draw obligation", () => {
     const offered = legalActions(ponWindow5)
     expect(offered[0]).toEqual({ type: 'draw', seat: 3 })
-    expect(forcedAction(ponWindow5, offered, PLAYER)).toBeNull()
+    expect(forcedAction(ponWindow5, offered, PLAYER, true)).toBeNull()
+  })
+
+  // T-012-01-02: the SAME seed-3 window as the "waits (null)" case just above,
+  // contrasted at promptEveryLegalCall: false — callPolicy declines both of the
+  // player's own chi variants (claimWindowInterrupts's own describe block), so the
+  // window is no longer interrupt-worthy for the player, and settles immediately
+  // to whatever the bots' own answers resolve to (South's pon here) — the EXACT
+  // action settleWindow(state, offered, PLAYER, null) independently computes, never
+  // a hardcoded literal (this file's double-keyed-oracle convention).
+  it('auto-settles (non-null) a window the player could claim, once policy declines every player offer and the toggle is off', () => {
+    const offered = legalActions(raceWindow3)
+    expect(callPolicy(seatView(raceWindow3, PLAYER), offered).type).toBe('draw')
+    const oracle = settleWindow(raceWindow3, offered, PLAYER, null)
+    expect(oracle).not.toBeNull()
+    expect(forcedAction(raceWindow3, offered, PLAYER, false)).toBe(oracle)
+    // The unfiltered toggle still waits at the identical state — the two calls
+    // differ ONLY in the 4th argument.
+    expect(forcedAction(raceWindow3, offered, PLAYER, true)).toBeNull()
   })
 
   it("routes a bot's discard obligation to discardPolicy — a tedashi, not tsumogiri", () => {
     const offered = legalActions(afterSouthDraw)
-    const forced = forcedAction(afterSouthDraw, offered, PLAYER)
+    const forced = forcedAction(afterSouthDraw, offered, PLAYER, true)
     // Identity with the policy's own choice over South's projected view.
     expect(forced).toBe(discardPolicy(seatView(afterSouthDraw, 1), offered))
     if (forced?.type !== 'discard') throw new Error('a bot mid-turn forces a discard')
@@ -836,12 +892,12 @@ describe('forcedAction', () => {
   })
 
   it("never forces the player's discard — that is the tap's choice", () => {
-    expect(forcedAction(afterEastDraw, legalActions(afterEastDraw), PLAYER)).toBeNull()
+    expect(forcedAction(afterEastDraw, legalActions(afterEastDraw), PLAYER, true)).toBeNull()
   })
 
   it('returns null on the empty offering of an ended hand — the halt condition', () => {
     expect(legalActions(exhausted)).toEqual([])
-    expect(forcedAction(exhausted, [], PLAYER)).toBeNull()
+    expect(forcedAction(exhausted, [], PLAYER, true)).toBeNull()
   })
 
   it("waits (null) at a ron-ONLY window behind a bot's draw — the auto-pass regression", () => {
@@ -851,22 +907,22 @@ describe('forcedAction', () => {
     const offered = legalActions(ronOnlyWindow)
     expect(offered[0]).toEqual({ type: 'draw', seat: 3 })
     expect(claimChoices(offered, PLAYER)).toEqual([])
-    expect(forcedAction(ronOnlyWindow, offered, PLAYER)).toBeNull()
+    expect(forcedAction(ronOnlyWindow, offered, PLAYER, true)).toBeNull()
   })
 
   it("waits (null) at the shanpon window — a win and claims behind the player's own draw", () => {
     const offered = legalActions(shanponWindow)
     expect(offered[0]).toEqual({ type: 'draw', seat: 0 })
-    expect(forcedAction(shanponWindow, offered, PLAYER)).toBeNull()
+    expect(forcedAction(shanponWindow, offered, PLAYER, true)).toBeNull()
   })
 
   it('waits (null) at the tsumo point — the discard choice and the win are both taps', () => {
-    expect(forcedAction(tsumoPoint, legalActions(tsumoPoint), PLAYER)).toBeNull()
+    expect(forcedAction(tsumoPoint, legalActions(tsumoPoint), PLAYER, true)).toBeNull()
   })
 
   it("waits (null) at the player's houtei; folds a BOT's houtei ron — the carve-out win", () => {
     // The player's: the guard owns it (rons-only offering, his among them).
-    expect(forcedAction(houteiEnd, legalActions(houteiEnd), PLAYER)).toBeNull()
+    expect(forcedAction(houteiEnd, legalActions(houteiEnd), PLAYER, true)).toBeNull()
     // A bot's: seed 147508 (core's houtei anchor, seat 3 wins). The placeholder
     // rested the hand here; a bot never declines its offered ron, so the loop now
     // folds the win out of the ended hand.
@@ -877,7 +933,7 @@ describe('forcedAction', () => {
     expect(offered).toHaveLength(1)
     expect(offered[0]).toEqual({ type: 'ron', seat: 3, tile: 43 })
     expect(winChoice(offered, PLAYER)).toBeNull()
-    expect(forcedAction(botHoutei, offered, PLAYER)).toBe(offered[0])
+    expect(forcedAction(botHoutei, offered, PLAYER, true)).toBe(offered[0])
     // And the fold accepts the settled ron into agari — the hand does not rest.
     const won = foldRecord({ seed: 147508, actions: [...prefix, offered[0]] })
     expect(won.phase).toBe('agari')
@@ -890,7 +946,7 @@ describe('forcedAction', () => {
       { type: 'draw', seat: 1 },
       { type: 'ron', seat: 3, tile: 72 },
     ])
-    expect(forcedAction(botRonWindow, offered, PLAYER)).toBe(offered[1])
+    expect(forcedAction(botRonWindow, offered, PLAYER, true)).toBe(offered[1])
   })
 
   it('takes a bot tsumo through the policy — the placeholder never-win rule is gone', () => {
@@ -903,7 +959,7 @@ describe('forcedAction', () => {
     const offered = legalActions(state)
     const tsumo = offered.find((a) => a.type === 'tsumo' && a.seat === 3)
     expect(tsumo).toBeDefined()
-    const forced = forcedAction(state, offered, PLAYER)
+    const forced = forcedAction(state, offered, PLAYER, true)
     expect(forced).toBe(tsumo)
     // Oracle: identical to the policy's own answer over seat 3's view.
     expect(forced).toBe(discardPolicy(seatView(state, 3), offered))
@@ -920,7 +976,7 @@ describe('full hand driven through the seam', () => {
     for (let guard = 0; guard < 300; guard++) {
       const offered = legalActions(state)
       if (offered.length === 0) break
-      const forced = forcedAction(state, offered, PLAYER)
+      const forced = forcedAction(state, offered, PLAYER, true)
       let next: HandAction
       if (forced !== null) {
         // The bots' hand discards are the tsumogiri placeholder's disproof.
@@ -980,7 +1036,7 @@ describe('a claim driven through the seam', () => {
     const atWindow = foldRecord({ seed: 15, actions })
     const offered = legalActions(atWindow)
     // The prompt is up, and no bot holds an offer (mined): the settle is the tap's.
-    expect(forcedAction(atWindow, offered, PLAYER)).toBeNull()
+    expect(forcedAction(atWindow, offered, PLAYER, true)).toBeNull()
     const pon = tapClaim(offered, PLAYER, { type: 'pon', uses: [44, 47] })
     expect(pon).toBe(claimChoices(offered, PLAYER)[0])
     const settled = settleWindow(atWindow, offered, PLAYER, pon)
@@ -994,7 +1050,7 @@ describe('a claim driven through the seam', () => {
     ])
     // The claim discard is owed: not forced, nothing settles — the player's tap only.
     const mustDiscard = legalActions(claimed)
-    expect(forcedAction(claimed, mustDiscard, PLAYER)).toBeNull()
+    expect(forcedAction(claimed, mustDiscard, PLAYER, true)).toBeNull()
     expect(settleWindow(claimed, mustDiscard, PLAYER, null)).toBeNull()
     const out = tapDiscard(mustDiscard, PLAYER, claimed.hands[PLAYER][0])
     expect(out).toBe(mustDiscard[0])
@@ -1003,7 +1059,7 @@ describe('a claim driven through the seam', () => {
     // Play resumes without player input: the next seat's draw is forced again.
     const resumed = foldRecord({ seed: 15, actions })
     const offeredResumed = legalActions(resumed)
-    const forced = forcedAction(resumed, offeredResumed, PLAYER)
+    const forced = forcedAction(resumed, offeredResumed, PLAYER, true)
     expect(forced).not.toBeNull()
     expect(offeredResumed).toContain(forced)
   })
@@ -1012,7 +1068,7 @@ describe('a claim driven through the seam', () => {
     const actions: HandAction[] = [...racePrefix3]
     const atWindow = foldRecord({ seed: 3, actions })
     const offered = legalActions(atWindow)
-    expect(forcedAction(atWindow, offered, PLAYER)).toBeNull() // the prompt is up
+    expect(forcedAction(atWindow, offered, PLAYER, true)).toBeNull() // the prompt is up
     const chi = tapClaim(offered, PLAYER, EAST_CHI_A)!
     const settled = settleWindow(atWindow, offered, PLAYER, chi)
     // South's pon strictly cuts its shanten and keeps a yaku anchor (mined), and a
@@ -1025,7 +1081,7 @@ describe('a claim driven through the seam', () => {
     expect(claimed.melds[PLAYER]).toEqual([])
     // South owes the claim discard; the loop drives it by policy without any tap.
     const mustDiscard = legalActions(claimed)
-    const forced = forcedAction(claimed, mustDiscard, PLAYER)
+    const forced = forcedAction(claimed, mustDiscard, PLAYER, true)
     expect(forced).toBe(discardPolicy(seatView(claimed, 1), mustDiscard))
   })
 })
@@ -1051,7 +1107,7 @@ describe('wins driven through the seam', () => {
       if (win !== null) {
         next = settleWindow(state, offered, PLAYER, win)
       } else {
-        next = forcedAction(state, offered, PLAYER)
+        next = forcedAction(state, offered, PLAYER, true)
         if (next === null && claimChoices(offered, PLAYER).length > 0) {
           next = settleWindow(state, offered, PLAYER, null)
         }
@@ -1076,7 +1132,7 @@ describe('wins driven through the seam', () => {
     // Quiescence through the seam: the won hand offers nothing and drives nothing.
     const offered = legalActions(won)
     expect(offered).toEqual([])
-    expect(forcedAction(won, offered, PLAYER)).toBeNull()
+    expect(forcedAction(won, offered, PLAYER, true)).toBeNull()
     expect(settleWindow(won, offered, PLAYER, null)).toBeNull()
     expect(winChoice(offered, PLAYER)).toBeNull()
   })
@@ -1147,5 +1203,79 @@ describe('wins driven through the seam', () => {
       tile: 21,
       yaku: ['chiitoitsu', 'houtei'],
     })
+  })
+})
+
+describe('buildReportText', () => {
+  it('formats the message, context block, and notation in one deterministic string', () => {
+    const text = buildReportText({
+      message: 'the chi button disappeared\nafter I tapped pass',
+      notation: 'v1 25evpds\nD0 K0af',
+      terminology: 'romaji',
+      handIndex: 2,
+      actionCount: 5,
+      origin: 'https://mahjong.b28.dev',
+    })
+    expect(text).toBe(
+      [
+        'the chi button disappeared',
+        'after I tapped pass',
+        '',
+        '---',
+        'terminology: romaji',
+        'hand: 2',
+        'actions: 5',
+        'origin: https://mahjong.b28.dev',
+        '---',
+        'v1 25evpds',
+        'D0 K0af',
+      ].join('\n'),
+    )
+  })
+
+  it('accepts an empty message', () => {
+    const text = buildReportText({
+      message: '',
+      notation: 'v1 7',
+      terminology: 'zh-hant',
+      handIndex: 0,
+      actionCount: 0,
+      origin: 'offline',
+    })
+    expect(text.startsWith('\n\n---\nterminology: zh-hant')).toBe(true)
+    expect(text.endsWith('v1 7')).toBe(true)
+  })
+})
+
+describe('buildIssueUrl', () => {
+  it('encodes a short title/body into a github.com new-issue URL', () => {
+    const link = buildIssueUrl('Bug report', 'line one\nline two')
+    expect(link.clipboardFirst).toBe(false)
+    expect(link.url).toBe(
+      `https://github.com/${GITHUB_REPO}/issues/new?title=${encodeURIComponent('Bug report')}&body=${encodeURIComponent('line one\nline two')}`,
+    )
+  })
+
+  it('falls back to a short clipboard-first body past the length threshold', () => {
+    const longBody = 'x'.repeat(6500)
+    const link = buildIssueUrl('Bug report', longBody)
+    expect(link.clipboardFirst).toBe(true)
+    expect(link.url).not.toContain('x'.repeat(100))
+    expect(link.url).toContain(encodeURIComponent('paste the copied report'))
+    expect(link.url.length).toBeLessThanOrEqual(MAX_ISSUE_URL_LENGTH)
+  })
+
+  it('takes the full-body branch exactly at the threshold boundary', () => {
+    // Binary-search-free construction: grow the body until the FULL encoded URL
+    // lands exactly at MAX_ISSUE_URL_LENGTH, then confirm that exact length still
+    // takes the <= branch (the full body survives, not the fallback).
+    const title = 'Bug report'
+    const base = `https://github.com/${GITHUB_REPO}/issues/new?title=${encodeURIComponent(title)}&body=`
+    const target = MAX_ISSUE_URL_LENGTH - base.length
+    const body = 'y'.repeat(target)
+    const link = buildIssueUrl(title, body)
+    expect(link.url.length).toBe(MAX_ISSUE_URL_LENGTH)
+    expect(link.clipboardFirst).toBe(false)
+    expect(link.url).toContain('y'.repeat(target))
   })
 })
