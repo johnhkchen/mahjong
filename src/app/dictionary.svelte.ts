@@ -34,6 +34,13 @@ export type TermKey =
   | 'fu'
   | 'han'
   | 'pot'
+  | 'promptEveryCall'
+  | 'quietCalls'
+  | 'reportBug'
+  | 'copyReport'
+  | 'openIssue'
+  | 'reportMessage'
+  | 'reportCopied'
 
 const TERMS: Record<TermKey, Record<Terminology, string>> = {
   chi: { romaji: 'chi', 'zh-hant': '吃' },
@@ -58,6 +65,19 @@ const TERMS: Record<TermKey, Record<Terminology, string>> = {
   han: { romaji: 'han', 'zh-hant': '翻' },
   // The riichi-stick pot riding the table between hands (supplied sticks, 供託).
   pot: { romaji: 'riichi pot', 'zh-hant': '供託' },
+  // T-012-01-02's call-prompt-filter toggle — the header button always names the
+  // mode a tap switches TO (App.svelte's own convention, echoing TERMINOLOGY_LABEL).
+  promptEveryCall: { romaji: 'prompt every call', 'zh-hant': '提示每次叫牌' },
+  quietCalls: { romaji: 'quiet calls', 'zh-hant': '安靜叫牌' },
+  // T-013-02-01's report-bug dialog — the dialog's own chrome only (heading, both
+  // delivery buttons, the message field's label); the report body itself (context
+  // block + notation) is deliberately English scaffolding for the maintainer, never
+  // routed through term() (design.md Decision 4).
+  reportBug: { romaji: 'report bug', 'zh-hant': '回報問題' },
+  copyReport: { romaji: 'copy report', 'zh-hant': '複製回報' },
+  openIssue: { romaji: 'open issue', 'zh-hant': '開啟議題' },
+  reportMessage: { romaji: 'message', 'zh-hant': '訊息' },
+  reportCopied: { romaji: 'copied', 'zh-hant': '已複製' },
 }
 
 const STORAGE_KEY = 'mahjong-terminology'
