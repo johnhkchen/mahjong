@@ -67,3 +67,16 @@ to keep it lean. One line per epic: what it delivered. Full cards live in
   (吃 碰 槓 胡 自摸 立直 流局 聽牌 振聽, seats 東南西北, score-screen terms) behind a header
   toggle, one localStorage key, romaji default, dual-terminology SSR coverage, single-file
   gate green (104KB). Fully overseer-authored. 3/3 tickets done (936 tests at sweep).
+- **E-011 claim-window-race-legibility** (owner playtest: double chi/pon dialogs) — window
+  outcome notice ("South called pon — your chi was outranked"), per-window keyed prompt
+  remount with entry beat, interaction repro suite; plus inline fixes: houtei dismissal reset
+  at hand boundaries, stray-pass dismissal guard, riichi pot surfaced (供託) with
+  scores+pot conservation asserted. 4/4 tickets done.
+- **E-012 claim-prompt-input-protection** (owner "go ahead") — mount input-guard matching the
+  entry beat (taps can't misland across windows), useful-call prompt filter defaulting to
+  policy-approved claims with a persisted prompt-every-call toggle. 2/2 tickets done.
+- **E-013 bug-report-is-a-hand-log** (owner ask) — the action-log text notation landed in core
+  (versioned, round-trip property-tested: parse(serialize(r)) folds deep-equal), report-bug
+  dialog (message + notation + context via clipboard and prefilled GitHub issue URL, no
+  server), paste-to-reproduce loader. 3/3 tickets done (1023 tests at sweep). Sweep note:
+  sessions left new modules uncommitted — HEAD failed 8 test files; recovered (3b026f2).
