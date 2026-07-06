@@ -98,6 +98,22 @@ export function claimChoices(offered: readonly HandAction[], player: Seat): Hand
 }
 
 /**
+ * The player's own-turn kan offers — ankan on four held copies, shouminkan adding the
+ * drawn fourth to an existing pon — elements of `offered` itself. These were emitted
+ * by legalActions since E-004 but consumed by NOTHING in the view (bots pass through
+ * unchosen by policy design; the player simply had no button — owner report #6,
+ * 2026-07-06: "missing the ability to kan when drawing my 4th tile"). The console's
+ * KanPrompt renders this list; declining is presentation-only (the discard surface
+ * and any riichi prompt stay live behind it).
+ */
+export function ownKanChoices(offered: readonly HandAction[], player: Seat): HandAction[] {
+  return offered.filter(
+    (action) =>
+      (action.type === 'ankan' || action.type === 'shouminkan') && action.seat === player,
+  )
+}
+
+/**
  * claimChoices deduped for presentation: the FIRST offer of each (call form,
  * `uses` kinds) group, frozen order preserved — still elements of `offered` itself.
  * The enumeration is complete, not minimal (a triplet holder has three pon pairs

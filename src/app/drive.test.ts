@@ -40,6 +40,7 @@ import {
   loadPastedRecord,
   MAX_ISSUE_URL_LENGTH,
   PLAYER,
+  ownKanChoices,
   promptChoices,
   riichiPrompt,
   seatScoresOf,
@@ -1388,5 +1389,33 @@ describe('loadPastedRecord', () => {
     const result = loadPastedRecord(notation)
     expect(result.ok).toBe(false)
     expect(result.message).toBe(expectedMessage)
+  })
+})
+
+describe('ownKanChoices', () => {
+  it('surfaces the ankan offer on four held/drawn copies, and nothing elsewhere (owner report #6)', () => {
+    // Hand-built four-copies state: East holds three 1m copies with the fourth drawn.
+    const base = dealt.hands[0].filter((tile) => tile > 3).slice(0, 10)
+    expect(base).toHaveLength(10)
+    const state = {
+      ...dealt,
+      turn: 0 as const,
+      drawn: 3 as TileId,
+      drawnFrom: 'wall' as const,
+      hands: [
+        [0, 1, 2, ...base] as TileId[],
+        dealt.hands[1],
+        dealt.hands[2],
+        dealt.hands[3],
+      ] as typeof dealt.hands,
+    }
+    const offered = legalActions(state)
+    const kans = ownKanChoices(offered, PLAYER)
+    expect(kans).toHaveLength(1)
+    expect(kans[0]!.type).toBe('ankan')
+    // Elements of offered itself, never rebuilt.
+    expect(offered).toContain(kans[0])
+    // And silence everywhere it should be silent: the dealt state offers no kan.
+    expect(ownKanChoices(legalActions(dealt), PLAYER)).toHaveLength(0)
   })
 })

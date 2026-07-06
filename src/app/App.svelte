@@ -16,6 +16,7 @@
     buildReportText,
     claimWindowInterrupts,
     forcedAction,
+    ownKanChoices,
     PLAYER,
     promptChoices,
     riichiPrompt,
@@ -32,6 +33,7 @@
   import { promptEveryLegalCall, setPromptEveryLegalCall } from './call-prompt-settings.svelte'
   import ClaimPrompt from './ClaimPrompt.svelte'
   import { activeTerminology, setTerminology, term, type Terminology } from './dictionary.svelte'
+  import KanPrompt from './KanPrompt.svelte'
   import ReportBug from './ReportBug.svelte'
   import RiichiPrompt from './RiichiPrompt.svelte'
   import Table from './Table.svelte'
@@ -126,6 +128,14 @@
   // shanten 0 regardless).
   const riichi = $derived(riichiPrompt(table, offered, PLAYER))
   const hint = $derived(riichi === null ? tenpaiHint(seatView(table, PLAYER)) : null)
+  // The own-turn kan decision (owner report #6): ankan/shouminkan offers existed in
+  // legalActions since E-004 with no view consumer — the player literally could not
+  // kan. Dismissal is presentation-only and keyed to the record's total action count:
+  // "not now" hides the prompt for THIS decision point only; any fold (the discard,
+  // a bot turn) moves the count and a later offer prompts afresh.
+  const kans = $derived(ownKanChoices(offered, PLAYER))
+  const actionsTotal = $derived(hands.reduce((n, hand) => n + hand.length, 0))
+  let kanDismissedAt = $state(-1)
   // The furiten badge and yakuless notice (T-009-03-02) — ambient "why can't I
   // win" facts, true across many turns rather than at one decision point, so
   // they render inside Table (near the hand) rather than the console's
@@ -252,6 +262,18 @@
     const settled = settleWindow(table, offered, PLAYER, win)
     if (settled !== null) activeHand().push(settled)
     notice = windowOutcome(win, settled)
+  }
+
+  // An own-turn kan folds directly, like riichi — no settleWindow arbitration
+  // (chankan does not exist in this slice; no other seat can answer). The rinshan
+  // draw and kan-dora flip are the fold's own derivations (E-004), so after the
+  // push the player simply holds the replacement tile and discards as usual.
+  function declareKan(choice: HandAction) {
+    activeHand().push(choice)
+  }
+
+  function passKan() {
+    kanDismissedAt = actionsTotal
   }
 
   // Both riichi buttons fold one of drive.ts's own riichiPrompt pair directly — no
@@ -399,6 +421,12 @@
       {/key}
     {:else if notice !== null}
       <WindowNotice outcome={notice} />
+    {:else if kans.length > 0 && kanDismissedAt !== actionsTotal}
+      <!-- Kan precedes riichi in the cascade: its "not now" is a pure dismissal
+           (nothing folds), so a declined kan falls straight through to the riichi
+           prompt at the SAME decision point — the reverse order would fold riichi's
+           decline discard and lose the kan chance. -->
+      <KanPrompt choices={kans} ondeclare={declareKan} onpass={passKan} />
     {:else if riichi !== null}
       <RiichiPrompt tile={riichi.tile} ondeclare={declareRiichi} ondecline={declineRiichi} />
     {:else if hint !== null}
