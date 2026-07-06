@@ -14,6 +14,7 @@ import {
   foldRecord,
   furitenSeal,
   kindOf,
+  openYakulessTenpai,
   yakulessTenpai,
   type HandAction,
   type Meld,
@@ -203,5 +204,50 @@ describe('the post-claim must-discard transient (report #3)', () => {
     const state = postPonState(1)
     expect(() => yakulessTenpai(state, 0)).not.toThrow()
     expect(yakulessTenpai(state, 0)).toBe(false)
+  })
+})
+
+// Owner report #4 (2026-07-06, build 73c9b68): "Couldn't tenpai" — an OPEN tenpai
+// hand whose every wait was yakuless got no warning (yakulessTenpai's menzen gate)
+// and no tenpai signal at all. openYakulessTenpai is the open-hand sibling.
+describe('openYakulessTenpai', () => {
+  // A hand-built open cannot-win tenpai: seat 0 holds a claimed 456m chi and
+  // concealed 234p 789s 99p + 46p — kanchan wait on 5p; the completion is all
+  // runs + a simple pair on an OPEN hand touching a 9: no tanyao, no yakuhai,
+  // no menzen tsumo. Kinds → first tile id of each kind (kind k -> id 4k).
+  function openYakulessState(): TableState {
+    const dealt = foldRecord({ seed: 1, actions: [] })
+    const id = (kindIndex: number, copy = 0) => (4 * kindIndex + copy) as TileId
+    // man kinds 0..8, pin 9..17, sou 18..26; 456m = kinds 3,4,5; pins 2,3,4 = kinds 10,11,12
+    const meld: Meld = { type: 'chi', claimed: id(3), from: 3 as Seat, own: [id(4), id(5)] }
+    const concealed: TileId[] = [
+      id(10), id(11), id(12), // 234p
+      id(24), id(25), id(26), // 789s
+      id(16, 0), id(16, 1),   // 99p pair
+      id(12, 1), id(14),      // 4p 6p — kanchan 5p
+    ]
+    return {
+      ...dealt,
+      hands: [concealed, dealt.hands[1], dealt.hands[2], dealt.hands[3]],
+      melds: [[meld], dealt.melds[1], dealt.melds[2], dealt.melds[3]],
+    }
+  }
+
+  it('is true for an open tenpai hand whose every wait completes yakuless', () => {
+    const state = openYakulessState()
+    expect(openYakulessTenpai(state, 0)).toBe(true)
+    // The closed-hand notice stays silent here (menzen gate) — the whole gap.
+    expect(yakulessTenpai(state, 0)).toBe(false)
+  })
+
+  it('is false for closed hands, non-wait shapes, and the post-claim transient', () => {
+    const dealt = foldRecord({ seed: 1, actions: [] })
+    expect(openYakulessTenpai(dealt, 0)).toBe(false) // closed (menzen) hand
+    const state = openYakulessState()
+    const midClaim: TableState = {
+      ...state,
+      hands: [[...state.hands[0], (4 * 20) as TileId], state.hands[1], state.hands[2], state.hands[3]],
+    }
+    expect(openYakulessTenpai(midClaim, 0)).toBe(false) // 11 concealed + meld: not at rest
   })
 })

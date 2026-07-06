@@ -234,6 +234,25 @@ export function yakulessTenpai(state: TableState, seat: Seat): boolean {
 }
 
 /**
+ * The OPEN-hand sibling of yakulessTenpai (owner report #4, 2026-07-06: "couldn't
+ * tenpai" — an open, mostly-yakuless tenpai hand got no tenpai signal and no yaku
+ * warning, because yakulessTenpai's menzen gate exists for its "riichi would fix
+ * this" copy, which doesn't hold open). True when `seat` is open, at a resting wait,
+ * and EVERY current wait would complete with no yaku by ron — the calls painted the
+ * hand into a cannot-win corner and the view should say so. Tsumo carries no rescue
+ * here (menzen-tsumo needs a closed hand), so an open yakuless tenpai genuinely
+ * cannot win on any current wait; only reshaping the hand (or a situational yaku
+ * like haitei arriving) changes that.
+ */
+export function openYakulessTenpai(state: TableState, seat: Seat): boolean {
+  if (isMenzen(state.melds[seat])) return false
+  if (!isWaitShaped(state, seat)) return false
+  const seatWaits = waits(state.hands[seat].map(kindOf), state.melds[seat])
+  if (seatWaits.length === 0) return false
+  return seatWaits.every((kind) => winYaku(state, seat, kind, 'discard').length === 0)
+}
+
+/**
  * The turn seat's tsumo offer at a post-draw point: the drawn tile completes the
  * hand (isAgari probe) with at least one yaku — the source is `drawnFrom` verbatim
  * ('wall' or 'rinshan', deciding menzen-tsumo/haitei vs rinshan kaihou), exactly

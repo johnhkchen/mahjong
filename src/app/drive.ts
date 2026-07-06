@@ -398,7 +398,12 @@ export function tenpaiHint(view: SeatView): number | null {
   const seat = view.seat
   if (view.drawn === null || view.riichi[seat]) return null
   const value = shanten([...view.hand, view.drawn].map(kindOf), view.melds[seat])
-  return value <= 0 ? null : value
+  // 0 IS a hint (owner report #4): an OPEN tenpai hand gets no riichi prompt, so
+  // without it the countdown ("2 away, 1 away") goes silent exactly at tenpai. The
+  // console cascade still prefers the riichi prompt when one is offered (closed
+  // hands), so 0 only ever renders as "tenpai" where nothing else owns the moment.
+  // A complete hand (-1) stays null — the win button owns that.
+  return value < 0 ? null : value
 }
 
 /**

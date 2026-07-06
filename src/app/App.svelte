@@ -3,6 +3,7 @@
     foldGame,
     furitenSeal,
     legalActions,
+    openYakulessTenpai,
     seatView,
     serializeGameRecord,
     yakulessTenpai,
@@ -133,6 +134,9 @@
   // computation of either fact happens here.
   const furitenTile = $derived(furitenSeal(table, PLAYER))
   const yakuless = $derived(yakulessTenpai(table, PLAYER))
+  // The open-hand sibling (owner report #4): calls made the hand yakuless — a
+  // cannot-win tenpai the closed-hand notice's menzen gate deliberately skips.
+  const openYakuless = $derived(openYakulessTenpai(table, PLAYER))
 
   // T-013-02-01's report-bug dialog (E-013): a bug report IS a hand log
   // (architecture.md §2), so the report text is just the record's OWN notation plus
@@ -359,7 +363,7 @@
       {term('reportBug')}
     </button>
   </header>
-  <Table {table} ontap={tap} scores={seatScores} onnext={newHand} {furitenTile} yakulessTenpai={yakuless} pot={game.pot} />
+  <Table {table} ontap={tap} scores={seatScores} onnext={newHand} {furitenTile} yakulessTenpai={yakuless} {openYakuless} pot={game.pot} />
   <!-- Visibility is the drive predicate family: claim choices or the win offer.
        The claimed tile is the window's when one is open (a claim offer implies
        one); the tsumo and houtei moments have none and the prompt renders
@@ -398,7 +402,11 @@
     {:else if riichi !== null}
       <RiichiPrompt tile={riichi.tile} ondeclare={declareRiichi} ondecline={declineRiichi} />
     {:else if hint !== null}
-      <p class="hint">{hint} away from {term('tenpai')}</p>
+      <!-- hint 0 = tenpai with no riichi prompt owning the moment (an open hand,
+           or riichi unaffordable/unavailable) — say it plainly (owner report #4). -->
+      <p class="hint">
+        {#if hint === 0}{term('tenpai')} — a discard can keep it{:else}{hint} away from {term('tenpai')}{/if}
+      </p>
     {/if}
   </div>
   <ReportBug

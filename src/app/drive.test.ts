@@ -755,8 +755,11 @@ describe('tenpaiHint', () => {
     expect(tenpaiHint(seatView(beforeSouthDraw, 1))).toBeNull()
   })
 
-  it('is null exactly at tenpai and at an outright completion — the riichi/win prompts own those', () => {
-    expect(tenpaiHint(seatView(riichiPoint, PLAYER))).toBeNull() // shanten 0
+  it('is 0 at tenpai (the console may say so when no riichi prompt owns the moment) and null at completion', () => {
+    // Owner report #4: an OPEN tenpai hand gets no riichi prompt, so 0 must reach the
+    // console rather than vanish. Closed hands still see the riichi prompt first —
+    // App's cascade, not this selector, owns that preference.
+    expect(tenpaiHint(seatView(riichiPoint, PLAYER))).toBe(0) // shanten 0
     expect(tenpaiHint(seatView(tsumoPoint, PLAYER))).toBeNull() // shanten -1, complete
   })
 

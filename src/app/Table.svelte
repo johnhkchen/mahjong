@@ -21,6 +21,7 @@
     onnext,
     furitenTile,
     yakulessTenpai,
+    openYakuless,
     pot,
   }: {
     table: TableState
@@ -35,6 +36,9 @@
     furitenTile?: TileId | null
     /** The player's yakuless-tenpai fact (core's yakulessTenpai, T-009-03-02). */
     yakulessTenpai?: boolean
+    /** The open-hand sibling (core's openYakulessTenpai, owner report #4): calls
+     *  painted the hand into a cannot-win tenpai — different copy, no riichi rescue. */
+    openYakuless?: boolean
     /**
      * The riichi-stick pot riding the table (game.pot verbatim) — without this
      * line a stick carried across a ryuukyoku visibly vanishes from the scores;
@@ -144,6 +148,11 @@
         {#if yakulessTenpai}
           <p class="yakuless" aria-label="yakuless tenpai">
             no yaku — this hand can only win by {term('tsumo')}; {term('riichi')} would fix this
+          </p>
+        {/if}
+        {#if openYakuless}
+          <p class="yakuless" aria-label="open yakuless tenpai">
+            {term('tenpai')}, but no yaku — an open hand with no yaku cannot win on these waits
           </p>
         {/if}
       {/if}
