@@ -178,6 +178,8 @@ describe('the paste-to-reproduce loader, end to end', () => {
       handIndex: 0,
       actionCount: MID_GAME_RECORD.hands[0].length,
       origin: 'https://mahjong.b28.dev',
+      build: 'abc1234',
+      calls: 'quiet',
     })
     pasteAndLoad(target, blob)
 

@@ -477,6 +477,12 @@ export interface BugReport {
   readonly handIndex: number
   readonly actionCount: number
   readonly origin: string
+  /** The running build's identity (vite's __BUILD_ID__) — a stale tab's report
+   *  self-identifies instead of masquerading as the deployed build. */
+  readonly build: string
+  /** The call-prompt setting in force ('quiet' | 'all') — prompt-visibility bugs
+   *  are undiagnosable without it (owner report #2, 2026-07-05). */
+  readonly calls: string
 }
 
 /**
@@ -495,6 +501,8 @@ export function buildReportText(report: BugReport): string {
     `hand: ${report.handIndex}`,
     `actions: ${report.actionCount}`,
     `origin: ${report.origin}`,
+    `build: ${report.build}`,
+    `calls: ${report.calls}`,
     '---',
     report.notation,
   ].join('\n')

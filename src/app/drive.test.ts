@@ -1220,6 +1220,8 @@ describe('buildReportText', () => {
       handIndex: 2,
       actionCount: 5,
       origin: 'https://mahjong.b28.dev',
+      build: 'abc1234',
+      calls: 'quiet',
     })
     expect(text).toBe(
       [
@@ -1231,6 +1233,8 @@ describe('buildReportText', () => {
         'hand: 2',
         'actions: 5',
         'origin: https://mahjong.b28.dev',
+        'build: abc1234',
+        'calls: quiet',
         '---',
         'v1 25evpds',
         'D0 K0af',
@@ -1246,6 +1250,8 @@ describe('buildReportText', () => {
       handIndex: 0,
       actionCount: 0,
       origin: 'offline',
+      build: 'abc1234',
+      calls: 'quiet',
     })
     expect(text.startsWith('\n\n---\nterminology: zh-hant')).toBe(true)
     expect(text.endsWith('v1 7')).toBe(true)
@@ -1309,6 +1315,8 @@ describe('loadPastedRecord', () => {
       handIndex: 0,
       actionCount: fixture.hands[0].length,
       origin: 'https://mahjong.b28.dev',
+      build: 'abc1234',
+      calls: 'quiet',
     })
     const result = loadPastedRecord(blob)
     expect(result.ok).toBe(true)

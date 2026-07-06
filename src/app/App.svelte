@@ -155,6 +155,8 @@
       handIndex,
       actionCount,
       origin,
+      build: typeof __BUILD_ID__ === 'undefined' ? 'dev' : __BUILD_ID__,
+      calls: promptEveryLegalCall() ? 'all' : 'quiet',
     }),
   )
   const issueLink = $derived(buildIssueUrl('Bug report', reportText))
