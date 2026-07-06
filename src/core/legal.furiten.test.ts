@@ -167,3 +167,41 @@ describe('yakulessTenpai', () => {
     expect(yakulessTenpai(openState, 2)).toBe(false)
   })
 })
+
+// Owner report #3 (2026-07-05, build 83506ca): "Persistent prompt on pon not
+// disappearing." A seat that has JUST claimed holds one extra tile until it discards
+// (post-pon: 11 concealed + 1 meld, not the 10 `waits` demands). furitenSeal and
+// yakulessTenpai run on EVERY folded state the view derives, including that transient;
+// before the isWaitShaped guard they threw there, and a throw inside a Svelte $derived
+// aborts the reactive update — freezing the DOM with the stale claim prompt still up.
+describe('the post-claim must-discard transient (report #3)', () => {
+  // A hand-built post-pon state: seat 0 pons, holding 11 concealed + 1 meld, owing a
+  // discard. The exact over-count that made `waits` throw.
+  function postPonState(seed: number): TableState {
+    const dealt = foldRecord({ seed, actions: [] })
+    const meld: Meld = { type: 'pon', claimed: dealt.hands[0][10], from: 2 as Seat, own: [
+      dealt.hands[0][11],
+      dealt.hands[0][12],
+    ] }
+    const concealed = dealt.hands[0].slice(0, 11) // 11 tiles, one short of a discard
+    return {
+      ...dealt,
+      turn: 0 as Seat,
+      hands: [concealed, dealt.hands[1], dealt.hands[2], dealt.hands[3]],
+      melds: [[meld], dealt.melds[1], dealt.melds[2], dealt.melds[3]],
+    }
+  }
+
+  it('furitenSeal returns null instead of throwing on an 11-concealed, 1-meld hand', () => {
+    const state = postPonState(1)
+    expect(state.hands[0]).toHaveLength(11)
+    expect(() => furitenSeal(state, 0)).not.toThrow()
+    expect(furitenSeal(state, 0)).toBeNull()
+  })
+
+  it('yakulessTenpai returns false instead of throwing on the same shape', () => {
+    const state = postPonState(1)
+    expect(() => yakulessTenpai(state, 0)).not.toThrow()
+    expect(yakulessTenpai(state, 0)).toBe(false)
+  })
+})

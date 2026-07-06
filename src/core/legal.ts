@@ -183,7 +183,24 @@ function ronOffers(state: TableState, discarder: Seat, tile: TileId): HandAction
  * fold-tracked flag stays authoritative for ronOffers regardless; this query
  * only loses its ability to NAME the tile, never the seal itself.
  */
+/**
+ * `waits` requires a resting tenpai shape — exactly `13 − 3·melds` concealed tiles.
+ * A seat that has JUST CLAIMED (pon/chi/kan) holds one extra tile until it discards
+ * (11 concealed with one meld, not 10), and a draw sits in `state.drawn`, not the
+ * hand — so the only over-count is the post-claim, must-discard transient. The two
+ * ambient teaching queries below (furitenSeal, yakulessTenpai) run on EVERY folded
+ * state the view derives, including that transient; without this guard `waits` throws
+ * there, and a throw inside a Svelte `$derived` aborts the whole reactive update,
+ * freezing the last DOM in place (owner report #3, 2026-07-05: a claim prompt that
+ * would not disappear after a pon). No meaningful furiten/yakuless fact exists mid-
+ * claim anyway — the hand is not yet at a wait.
+ */
+function isWaitShaped(state: TableState, seat: Seat): boolean {
+  return state.hands[seat].length === 13 - 3 * state.melds[seat].length
+}
+
 export function furitenSeal(state: TableState, seat: Seat): TileId | null {
+  if (!isWaitShaped(state, seat)) return null
   const seatWaits = new Set(waits(state.hands[seat].map(kindOf), state.melds[seat]))
   const ownSeal = state.ponds[seat].find((tile) => seatWaits.has(kindOf(tile)))
   if (ownSeal !== undefined) return ownSeal
@@ -210,6 +227,7 @@ export function furitenSeal(state: TableState, seat: Seat): TileId | null {
 export function yakulessTenpai(state: TableState, seat: Seat): boolean {
   if (state.riichi[seat]) return false
   if (!isMenzen(state.melds[seat])) return false
+  if (!isWaitShaped(state, seat)) return false // see furitenSeal's isWaitShaped note
   const seatWaits = waits(state.hands[seat].map(kindOf), state.melds[seat])
   if (seatWaits.length === 0) return false
   return seatWaits.every((kind) => winYaku(state, seat, kind, 'discard').length === 0)
