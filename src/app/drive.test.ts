@@ -351,6 +351,15 @@ describe('claimWindowInterrupts', () => {
     expect(claimWindowInterrupts(kanWindow212, offered, PLAYER, false)).toBe(true)
     expect(claimWindowInterrupts(kanWindow212, offered, PLAYER, true)).toBe(true)
   })
+
+  it('quiet mode never hides a pon/kan window, whatever the policy verdict (owner report #5)', () => {
+    // A held pair meeting its third tile is deliberate — the player's plan (toitoi,
+    // a yakuhai pair) may be one the bot heuristic doesn't credit. Only chi-only
+    // windows stay policy-gated; raceWindow3 above pins that half.
+    const offered = legalActions(mixedWindow15)
+    expect(claimChoices(offered, PLAYER).some((c) => c.type === 'pon')).toBe(true)
+    expect(claimWindowInterrupts(mixedWindow15, offered, PLAYER, false)).toBe(true)
+  })
 })
 
 describe('tapClaim', () => {

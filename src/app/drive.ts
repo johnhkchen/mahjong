@@ -149,6 +149,13 @@ export function claimWindowInterrupts(
   const claims = claimChoices(offered, player)
   if (claims.length === 0) return false
   if (promptEveryLegalCall) return true
+  // Quiet mode filters CHI only (owner report #5, 2026-07-06: a legal pon was
+  // silently auto-passed because callPolicy's conservative judgment stood in for
+  // the player's). A pon/kan window means the player HOLDS the pair/triplet and
+  // the third tile just landed — rare, deliberate, and possibly a plan (toitoi, a
+  // yakuhai pair) the bot heuristic doesn't credit: always ask. Chi windows recur
+  // on every kamicha discard — those stay policy-gated, the original noise fix.
+  if (claims.some((claim) => claim.type === 'pon' || claim.type === 'daiminkan')) return true
   return callPolicy(seatView(state, player), offered).type !== 'draw'
 }
 
