@@ -1,7 +1,12 @@
 <script lang="ts">
   import type { TileId } from '../core'
   import { term } from './dictionary.svelte'
-  import { MOUNT_GUARD_MS, prefersReducedMotion } from './mount-guard'
+  import {
+    markPromptClosed,
+    MOUNT_GUARD_MS,
+    prefersReducedMotion,
+    shouldGuardMount,
+  } from './mount-guard'
   import Tile from './Tile.svelte'
 
   // The P2-crown moment, charter.md's own quoted example ("you're tenpai — declare
@@ -21,18 +26,20 @@
     ondecline?: () => void
   } = $props()
 
-  // T-012-01-01: same mount-input guard as ClaimPrompt.svelte (mount-guard.ts's own
-  // constant, shared so neither prompt's duration can drift from the other) — a
-  // freshly-mounted riichi prompt ignores activations for one beat, presentation-
-  // only (no `disabled`, no visual change).
-  let guarded = $state(true)
+  // T-012-01-01, retuned with ClaimPrompt after the owner's 2026-07-05 hand-log
+  // report: the guard arms only when another prompt closed within the reopen window
+  // (the misland geometry); a cold mount takes fast taps immediately. While armed,
+  // buttons are visibly `disabled` — never a silent swallow.
+  let guarded = $state(shouldGuardMount() && !prefersReducedMotion())
   $effect(() => {
-    const duration = prefersReducedMotion() ? 0 : MOUNT_GUARD_MS
+    if (!guarded) return
     const timer = setTimeout(() => {
       guarded = false
-    }, duration)
+    }, MOUNT_GUARD_MS)
     return () => clearTimeout(timer)
   })
+  // Mark this prompt's close so the NEXT mount knows it reopened hot.
+  $effect(() => () => markPromptClosed())
 </script>
 
 <aside class="prompt riichi" role="group" aria-label="riichi prompt">
@@ -48,6 +55,7 @@
     <button
       type="button"
       class="call declare"
+      disabled={guarded}
       aria-label={term('declareRiichi')}
       onclick={() => {
         if (!guarded) ondeclare?.()
@@ -58,6 +66,7 @@
     <button
       type="button"
       class="pass"
+      disabled={guarded}
       aria-label={term('notYet')}
       onclick={() => {
         if (!guarded) ondecline?.()
@@ -69,6 +78,11 @@
 </aside>
 
 <style>
+  /* The armed mount guard made visible: never a silently-inert button. */
+  button:disabled {
+    opacity: 0.55;
+  }
+
   .prompt {
     display: flex;
     flex-direction: column;

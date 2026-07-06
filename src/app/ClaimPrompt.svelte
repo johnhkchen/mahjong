@@ -2,7 +2,12 @@
   import { kindOf, type HandAction, type TileId } from '../core'
   import type { ClaimChoice } from './drive'
   import { callTerm } from './dictionary.svelte'
-  import { MOUNT_GUARD_MS, prefersReducedMotion } from './mount-guard'
+  import {
+    markPromptClosed,
+    MOUNT_GUARD_MS,
+    prefersReducedMotion,
+    shouldGuardMount,
+  } from './mount-guard'
   import Tile from './Tile.svelte'
 
   // The call/pass prompt: pure input wiring, computation-free. `choices` is
@@ -39,22 +44,24 @@
     onwin?: () => void
   } = $props()
 
-  // T-012-01-01: a fresh window mounts a fresh ClaimPrompt (App.svelte keys the
-  // console on the window's own identity), and consecutive windows can open within
-  // a couple of BOT_DELAY_MS ticks of each other — close enough that a tap (or the
-  // second half of a phone double-tap) aimed at the closing prompt can land on the
-  // next one's buttons instead. `guarded` starts true and clears itself after one
-  // mount-guard.ts beat, matching the CSS entry transition below; every onclick below
-  // no-ops while it's still true. Presentation-only: nothing about the rendered
-  // button changes (no `disabled`, no class) — only whether the tap does anything.
-  let guarded = $state(true)
+  // T-012-01-01, retuned after the owner's 2026-07-05 hand-log report ("double-
+  // prompt"): the guard arms ONLY when another prompt closed within mount-guard.ts's
+  // reopen window — the one geometry where a tap aimed at the old prompt can land on
+  // this one's buttons. A cold mount takes fast taps immediately: a primed pon tapped
+  // within the beat was being silently eaten, so the prompt seemed to ask twice.
+  // While armed, buttons are visibly `disabled` (never a silent swallow); the beat
+  // then clears it. SSR renders unguarded ($effect never runs there; shouldGuardMount
+  // is boot-cold in Node).
+  let guarded = $state(shouldGuardMount() && !prefersReducedMotion())
   $effect(() => {
-    const duration = prefersReducedMotion() ? 0 : MOUNT_GUARD_MS
+    if (!guarded) return
     const timer = setTimeout(() => {
       guarded = false
-    }, duration)
+    }, MOUNT_GUARD_MS)
     return () => clearTimeout(timer)
   })
+  // Mark this prompt's close so the NEXT mount knows it reopened hot.
+  $effect(() => () => markPromptClosed())
 </script>
 
 <aside class="prompt" role="group" aria-label="call or pass">
@@ -68,6 +75,7 @@
       <button
         type="button"
         class="call win"
+        disabled={guarded}
         aria-label={win.type === 'ron' ? `${callTerm('ron')} ${kindOf(win.tile)}` : callTerm('tsumo')}
         onclick={() => {
           if (!guarded) onwin?.()
@@ -84,6 +92,7 @@
         <button
           type="button"
           class="call"
+          disabled={guarded}
           aria-label="{callTerm(choice.type)} {kindOf(choice.tile)} with {choice.uses
             .map(kindOf)
             .join(' ')}"
@@ -100,6 +109,7 @@
       <button
         type="button"
         class="pass"
+        disabled={guarded}
         aria-label="pass"
         onclick={() => {
           if (!guarded) onpass?.()
@@ -112,6 +122,11 @@
 </aside>
 
 <style>
+  /* The armed mount guard made visible: never a silently-inert button. */
+  button:disabled {
+    opacity: 0.55;
+  }
+
   .prompt {
     display: flex;
     flex-wrap: wrap;

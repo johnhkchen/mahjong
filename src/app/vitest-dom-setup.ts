@@ -43,3 +43,15 @@ Object.defineProperty(globalThis, 'localStorage', {
   configurable: true,
   writable: true,
 })
+
+// The mount guard's module-scoped "a prompt closed recently" timestamp must not leak
+// between tests: consecutive tests in one worker run milliseconds apart in wall-clock
+// terms, so a prompt unmounted at the end of test A would otherwise arm the guard for
+// an unrelated mount at the start of test B. Every dom test starts guard-cold; the
+// armed cases opt in explicitly (mount-guard.tap.svelte.test.ts).
+import { beforeEach } from 'vitest'
+import { resetMountGuard } from './mount-guard'
+
+beforeEach(() => {
+  resetMountGuard()
+})

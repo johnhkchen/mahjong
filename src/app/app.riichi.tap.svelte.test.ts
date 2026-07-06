@@ -74,16 +74,9 @@ describe('the riichi prompt, end to end', () => {
     const target = mountApp(RIICHI_GAME_SEED)
     await tickUntil(target, () => target.querySelector('[aria-label="declare riichi"]') !== null)
 
-    // T-012-01-01: a tap landing inside the prompt's mount-guard beat is inert — the
-    // button is rendered but the activation does nothing, no pond/hand change at all.
-    target.querySelector<HTMLButtonElement>('[aria-label="declare riichi"]')!.click()
-    flushSync()
-    expect(eastPondKinds(target)).not.toContain('6z')
-    expect(target.querySelector('[aria-label="riichi prompt"]')).not.toBeNull()
-
-    // The same activation, after the beat, lands normally.
-    await vi.advanceTimersByTimeAsync(MOUNT_GUARD_MS)
-    flushSync()
+    // Retuned T-012-01-01 (owner hand-log report 2026-07-05): a COLD prompt mount —
+    // no prompt closed within the reopen window — is unguarded, so a fast first tap
+    // lands immediately. The armed case (hot reopen) is claim-window-race.tap's.
     target.querySelector<HTMLButtonElement>('[aria-label="declare riichi"]')!.click()
     flushSync()
 
