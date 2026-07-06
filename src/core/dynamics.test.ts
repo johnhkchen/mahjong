@@ -433,9 +433,12 @@ describe('conservation over random play', () => {
     )
   })
 
+  // Explicit timeout: every-prefix folding over the whole corpus is O(n²) work that
+  // sits under 5s on a dev machine but ran past the default on the shared CI runner
+  // (first caught by CI run 28761680607 — locally green, CI red).
   it('the greedy corpus conserves the partition at every prefix of every game', () => {
     for (const record of greedyCorpus) expectConserved(record)
-  })
+  }, 30_000)
 })
 
 describe('termination', () => {
